@@ -1,0 +1,13 @@
+75b6a36c64a1: Waiting 
+44136fa355b3: Waiting 
+ecc510c1e359: Waiting 
+c4ddf0379ee8: Waiting 
+failed to do request: Head "https://asia-south1-docker.pkg.dev/v2/cloud-cold-chain/coldchain-containers/dashboard-api/blobs/sha256:ecc510c1e359bdc007b39802570bb7e4dec7d6ebccf357c3201a74299113e05e": dial tcp 74.125.130.82:443: connect: connection refused
+mca2025_2503_abhishek@cloudshell:~/cold-chain-cloud (cloud-cold-chain)$ gcloud services enable cloudbuild.googleapis.com
+Operation "operations/acf.p2-1085990727074-2938ba72-4f62-4892-bb05-e3b860933ba9" finished successfully.
+mca2025_2503_abhishek@cloudshell:~/cold-chain-cloud (cloud-cold-chain)$ gcloud builds submit dashboard/ \
+  --tag asia-south1-docker.pkg.dev/cloud-cold-chain/coldchain-containers/dashboard-api:latest
+Creating temporary archive of 9 file(s) totalling 125.6 KiB before compression.
+Uploading tarball of [dashboard/] to [gs://cloud-cold-chain_cloudbuild/source/1792120980.375369-12fdee6d00a046f7982892028d101b50.tgz]
+ERROR: (gcloud.builds.submit) NOT_FOUND: Requested entity was not found. This command is authenticated as mca2025.2503.abhishek@unigoa.ac.in which is the active account specified by the [core/account] property.
+mca2025_2503_abhishek@cloudshell:~/cold-chain-cloud (cloud-cold-chain)$ 

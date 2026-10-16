@@ -25,6 +25,7 @@ locals {
     "storage.googleapis.com",
     "cloudscheduler.googleapis.com",
     "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
     "iam.googleapis.com"
   ]
 }
