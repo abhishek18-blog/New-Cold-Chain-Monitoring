@@ -116,10 +116,15 @@ cd "$ROOT_DIR/terraform"
 
 terraform init
 
+# Helper function to check if resource exists in state safely (avoids "No state file was found!" noise)
+has_resource_in_state() {
+  [ -f terraform.tfstate ] && terraform state list 2>/dev/null | grep -q "$1"
+}
+
 # If the repository was created outside terraform, import it so terraform doesn't fail with 409 Conflict
 REPO_ID="projects/${PROJECT_ID}/locations/${REGION}/repositories/${REPO_NAME}"
-if ! terraform state list | grep -q "google_artifact_registry_repository.containers"; then
-  echo "Importing existing Artifact Registry into Terraform state..."
+if ! has_resource_in_state "google_artifact_registry_repository.containers"; then
+  echo "Ensuring Artifact Registry is tracked in Terraform state..."
   terraform import \
     -var="project_id=${PROJECT_ID}" \
     -var="region=${REGION}" \
@@ -129,7 +134,7 @@ if ! terraform state list | grep -q "google_artifact_registry_repository.contain
 fi
 
 # If Firestore database already exists, import it to prevent 409 Conflict
-if ! terraform state list | grep -q "google_firestore_database.database"; then
+if ! has_resource_in_state "google_firestore_database.database"; then
   if gcloud firestore databases describe --database="(default)" --project="$PROJECT_ID" >/dev/null 2>&1; then
     echo "Importing existing Firestore (default) database into Terraform state..."
     terraform import \
