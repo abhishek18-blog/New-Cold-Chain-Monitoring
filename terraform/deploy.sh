@@ -39,6 +39,7 @@ gcloud services enable \
   pubsub.googleapis.com \
   firestore.googleapis.com \
   cloudscheduler.googleapis.com \
+  cloudresourcemanager.googleapis.com \
   --project="$PROJECT_ID"
 
 # 2. Ensure Artifact Registry Docker repository exists

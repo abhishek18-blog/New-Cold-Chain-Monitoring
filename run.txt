@@ -1,0 +1,387 @@
+================================================================================
+COLDCHAIN FLEET - COMPLETE CLOUD & LOCAL RUNBOOK (run.txt)
+================================================================================
+Project: ColdChain Fleet IoT & Cold-Chain Stream Processing Platform
+GCP Project ID : cloud-cold-chain
+GCP Region     : asia-south1
+Repository     : https://github.com/abhishek18-blog/cold-chain-cloud.git
+================================================================================
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. System Architecture & Microservices Overview
+2. Where Commands Are Run (Environment Key)
+3. Past Errors Encountered & How They Were Solved
+4. End-to-End GCP Cloud Deployment (Step-by-Step)
+5. How to Test & Demonstrate the Live Cloud Pipeline
+6. How to Inspect GCP Cloud Resources & Logs
+7. Teardown / Cost Prevention
+8. Local Development Alternative (Docker Compose)
+
+
+================================================================================
+1. SYSTEM ARCHITECTURE & MICROSERVICES OVERVIEW
+================================================================================
+This platform monitors refrigerated IoT delivery trucks transmitting real-time
+telemetry (temperature, GPS, speed, fuel, door status). It detects temperature
+excursions and lost truck signals (>120s silent).
+
+There are 7 microservices in total (4 deployed to Google Cloud Run):
+
+1. coldchain-dashboard-api (Cloud Run Service)
+   - Public HTTPS REST API & live Leaflet map UI (FastAPI + JS).
+2. coldchain-processor (Cloud Run Service)
+   - Real-time stream processor pulling from Pub/Sub, evaluating rules,
+     and upserting state into Cloud Firestore.
+3. coldchain-alert-notifier (Cloud Run Service)
+   - Background worker listening on alerts topic to simulate driver alerts/SMS.
+4. coldchain-silence-detector (Cloud Run Job)
+   - Audits inactive trucks (>120s without pings) and marks them NO_SIGNAL.
+5. coldchain-silence-detector-trigger (Cloud Scheduler)
+   - Cron trigger firing the silence detector job once per minute (* * * * *).
+6. telemetry-generator (Local / IoT edge)
+   - Generates simulated telemetry for trucks TRK-001 through TRK-015.
+7. archiver (Storage Worker)
+   - Batches raw telemetry into GCS / local compressed .jsonl.gz archives.
+
+
+================================================================================
+2. WHERE COMMANDS ARE RUN (ENVIRONMENT KEY)
+================================================================================
+Throughout this guide, each command specifies exactly WHERE to run:
+
+[CLOUD SHELL] -> Google Cloud Shell terminal in your browser (recommended for GCP)
+                 Prompt looks like: mca2025_..._abhishek@cloudshell:~/cold-chain-cloud$
+[LOCAL PC]    -> Terminal on your laptop/desktop (Linux / Mac / WSL / Git Bash)
+                 Prompt looks like: user@desktop:~/Desktop/cold-chain-cloud$
+[BROWSER]     -> Any standard web browser (Chrome, Firefox, Safari)
+
+
+================================================================================
+3. PAST ERRORS ENCOUNTERED & HOW THEY WERE SOLVED
+================================================================================
+
+--------------------------------------------------------------------------------
+Error A: `dial tcp ...:443: connect: connection refused` during `docker push`
+--------------------------------------------------------------------------------
+- WHERE: Cloud Shell when pushing to Artifact Registry.
+- WHY IT HAPPENED:
+  1. Cloud Shell's local Docker daemon has proxy and MTU quirks with direct uploads.
+  2. The Artifact Registry repository `coldchain-containers` did not exist yet.
+- THE FIX:
+  Switched container builds from local Docker daemon to Google Cloud Build
+  (`gcloud builds submit`). Cloud Build builds and pushes directly inside Google's
+  high-speed internal datacenter network.
+
+--------------------------------------------------------------------------------
+Error B: `ERROR: (gcloud.builds.submit) NOT_FOUND: Requested entity was not found`
+--------------------------------------------------------------------------------
+- WHERE: Cloud Shell when running `gcloud builds submit dashboard/`.
+- WHY IT HAPPENED:
+  1. The Cloud Storage API was not enabled, so Cloud Build could not auto-create
+     the default staging bucket.
+  2. Missing `--region=asia-south1`: University/organization accounts (unigoa.ac.in)
+     enforce regional location restrictions. Omission of `--region` routed to
+     global Cloud Build, returning 404 NOT_FOUND.
+- THE FIX:
+  Updated `deploy.sh` to explicitly create `gs://${PROJECT_ID}-cloudbuild-staging`
+  in `asia-south1` and pass `--region=asia-south1` and `--gcs-source-staging-dir`.
+
+--------------------------------------------------------------------------------
+Error C: `E: Unable to locate package terraform` / dummy stub notice
+--------------------------------------------------------------------------------
+- WHERE: Cloud Shell when attempting `sudo apt install terraform`.
+- WHY IT HAPPENED:
+  Ubuntu does not include Terraform in default apt repos, and Cloud Shell ships
+  with an informational stub wrapper at `/usr/bin/terraform`.
+- THE FIX:
+  Downloaded the official standalone HashiCorp Terraform Linux binary directly
+  and placed it into `/usr/bin/terraform`.
+
+--------------------------------------------------------------------------------
+Error D: `Error: Reference to undeclared resource ... "locals" "required_services"`
+--------------------------------------------------------------------------------
+- WHERE: Cloud Shell during `terraform apply`.
+- WHY IT HAPPENED:
+  In Terraform HCL, local values defined in a `locals { }` block must be
+  referenced as `local.<name>` (singular), NOT `locals.<name>` (plural).
+- THE FIX:
+  Corrected lines 34 and 182 in `terraform/main.tf` from `locals.` to `local.`.
+
+--------------------------------------------------------------------------------
+Error E: `No state file was found!`
+--------------------------------------------------------------------------------
+- WHERE: Cloud Shell during initial script run.
+- WHY IT HAPPENED:
+  On a fresh deployment, `terraform state list` was queried before any
+  `terraform.tfstate` file had been generated.
+- THE FIX:
+  Added a `has_resource_in_state` helper function in `deploy.sh` that checks
+  `[ -f terraform.tfstate ]` first and silences stderr.
+
+--------------------------------------------------------------------------------
+Error F: `on main.tf line 206, in data "google_project" "current"`
+--------------------------------------------------------------------------------
+- WHERE: Cloud Shell during Terraform plan phase.
+- WHY IT HAPPENED:
+  Querying `data.google_project` requires `cloudresourcemanager.googleapis.com`
+  to read project metadata and numbers.
+- THE FIX:
+  Added `cloudresourcemanager.googleapis.com` to `required_services` in `main.tf`
+  and the initial API enablement step in `deploy.sh`.
+
+
+================================================================================
+4. END-TO-END GCP CLOUD DEPLOYMENT (STEP-BY-STEP)
+================================================================================
+
+Follow these exact steps to deploy to Google Cloud:
+
+--------------------------------------------------------------------------------
+STEP 1: Open Google Cloud Shell
+--------------------------------------------------------------------------------
+WHERE: [BROWSER]
+WHY  : Cloud Shell provides a browser-based authenticated shell connected directly
+       to your GCP project with zero local configuration required.
+HOW  :
+1. Navigate to: https://console.cloud.google.com/
+2. In the top-right toolbar, click the Cloud Shell button: [ >_ ]
+3. Ensure your project is set to `cloud-cold-chain` in the terminal prompt.
+
+--------------------------------------------------------------------------------
+STEP 2: Ensure Terraform Binary is Installed in Cloud Shell
+--------------------------------------------------------------------------------
+WHERE: [CLOUD SHELL]
+WHY  : Cloud Shell defaults to a placeholder script. This installs the real binary.
+COMMAND:
+```bash
+wget -q https://releases.hashicorp.com/terraform/1.9.5/terraform_1.9.5_linux_amd64.zip
+unzip -o -q terraform_1.9.5_linux_amd64.zip
+sudo mv terraform /usr/bin/terraform
+rm -f terraform_1.9.5_linux_amd64.zip
+terraform version
+```
+
+--------------------------------------------------------------------------------
+STEP 3: Sync Latest Fixes from GitHub
+--------------------------------------------------------------------------------
+WHERE: [CLOUD SHELL]
+WHY  : Pulls the latest syntax fixes, idempotent state imports, and build scripts.
+COMMAND:
+```bash
+cd ~/cold-chain-cloud
+git pull origin main
+```
+
+--------------------------------------------------------------------------------
+STEP 4: Run the Automated Deployment Script
+--------------------------------------------------------------------------------
+WHERE: [CLOUD SHELL]
+WHY  : Executes all 6 deployment phases in one automated command:
+       1. Enables all 8 required GCP APIs (Run, Pub/Sub, Firestore, Storage,
+          Cloud Scheduler, Artifact Registry, Cloud Build, Resource Manager).
+       2. Creates Artifact Registry repo `coldchain-containers` in `asia-south1`.
+       3. Grants Cloud Build service account permissions to write container images.
+       4. Creates regional Cloud Build staging bucket `gs://${PROJECT_ID}-cloudbuild-staging`.
+       5. Submits all 4 microservices to Cloud Build in parallel for compilation.
+       6. Runs `terraform init` and `terraform apply` with automatic state recovery.
+COMMAND:
+```bash
+chmod +x terraform/deploy.sh
+./terraform/deploy.sh cloud-cold-chain asia-south1
+```
+
+--------------------------------------------------------------------------------
+STEP 5: Retrieve Your Live Dashboard URL
+--------------------------------------------------------------------------------
+WHERE: [CLOUD SHELL]
+WHY  : Obtains the publicly accessible HTTPS URL of your deployed web interface.
+COMMAND:
+```bash
+cd ~/cold-chain-cloud/terraform
+terraform output dashboard_url
+```
+(Shortcut without Terraform):
+```bash
+gcloud run services describe coldchain-dashboard-api --region=asia-south1 --format="value(status.url)"
+```
+
+
+================================================================================
+5. HOW TO TEST & DEMONSTRATE THE LIVE CLOUD PIPELINE
+================================================================================
+
+Once deployed, test your streaming pipeline in action:
+
+--------------------------------------------------------------------------------
+Test 1: Open the Web Operations Dashboard
+--------------------------------------------------------------------------------
+WHERE: [BROWSER]
+WHY  : Verify that the dashboard loads the live map, truck status cards, and KPI panels.
+HOW  : Open the `dashboard_url` generated in Step 5 (e.g. https://coldchain-dashboard-api-***.asia-south1.run.app).
+
+--------------------------------------------------------------------------------
+Test 2: Simulate Real-Time Telemetry Ingestion (NORMAL Status)
+--------------------------------------------------------------------------------
+WHERE: [CLOUD SHELL]
+WHY  : Publishes an in-spec telemetry packet for truck TRK-001 into Google Cloud Pub/Sub.
+       The `processor` worker consumes it, evaluates temperature, and upserts to Firestore.
+COMMAND:
+```bash
+gcloud pubsub topics publish telemetry-topic --message='{
+  "truck_id": "TRK-001",
+  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'",
+  "temperature": -18.5,
+  "target_temp": -20.0,
+  "humidity": 65.0,
+  "latitude": 15.4989,
+  "longitude": 73.8278,
+  "speed": 55.0,
+  "fuel_level": 82.0,
+  "battery_voltage": 12.5,
+  "route_id": "ROUTE-GOA-MUMBAI"
+}'
+```
+VERIFY: In the web browser, TRK-001 appears green (status: OK).
+
+--------------------------------------------------------------------------------
+Test 3: Trigger an Incident Alert (Temperature Excursion)
+--------------------------------------------------------------------------------
+WHERE: [CLOUD SHELL]
+WHY  : Tests the automated incident alert pipeline. TRK-002 sends a dangerous
+       temperature (-2.0°C against target -20.0°C).
+COMMAND:
+```bash
+gcloud pubsub topics publish telemetry-topic --message='{
+  "truck_id": "TRK-002",
+  "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'",
+  "temperature": -2.0,
+  "target_temp": -20.0,
+  "humidity": 88.0,
+  "latitude": 15.3500,
+  "longitude": 73.9500,
+  "speed": 40.0,
+  "fuel_level": 55.0,
+  "battery_voltage": 11.8,
+  "route_id": "ROUTE-GOA-PUNE"
+}'
+```
+VERIFY:
+1. TRK-002 turns red on the dashboard map.
+2. A new alert record appears in the Incident Feed table.
+3. `processor` routes the incident event to `alerts-topic`.
+4. `alert-notifier` logs an SMS/buzzer dispatch for the driver.
+
+--------------------------------------------------------------------------------
+Test 4: Batch Simulation via Dashboard UI
+--------------------------------------------------------------------------------
+WHERE: [BROWSER]
+WHY  : Simulates live fleet activity without running terminal commands.
+HOW  :
+1. On the web dashboard, scroll to the "Telemetry Test Studio" section.
+2. Click "Simulate Normal Batch" to broadcast updates across all 15 trucks.
+3. Click "Trigger Crisis Excursion" to simulate simultaneous refrigeration failures.
+
+
+================================================================================
+6. HOW TO INSPECT GCP CLOUD RESOURCES & LOGS
+================================================================================
+
+--------------------------------------------------------------------------------
+Inspect Live Cloud Run Logs
+--------------------------------------------------------------------------------
+WHERE: [CLOUD SHELL]
+WHY  : Observe messages being processed and classified in real time.
+COMMANDS:
+```bash
+# Stream processor worker logs
+gcloud run services logs tail coldchain-processor --region=asia-south1
+
+# Incident notification worker logs
+gcloud run services logs tail coldchain-alert-notifier --region=asia-south1
+
+# Web API / Dashboard logs
+gcloud run services logs tail coldchain-dashboard-api --region=asia-south1
+```
+
+--------------------------------------------------------------------------------
+Inspect Cloud Firestore Records
+--------------------------------------------------------------------------------
+WHERE: [BROWSER]
+WHY  : Verify persistent document storage for live truck states and alert incidents.
+HOW  :
+1. Go to: https://console.cloud.google.com/firestore
+2. Select database `(default)`.
+3. Browse collections:
+   - `live_status`: Documents for each active truck (TRK-001, TRK-002, etc.).
+   - `alerts`: Historical log of all temperature excursions and lost signal incidents.
+
+--------------------------------------------------------------------------------
+Inspect Silence Detector Job & Cloud Scheduler
+--------------------------------------------------------------------------------
+WHERE: [CLOUD SHELL]
+WHY  : Confirm that the dead-truck audit cron runs every minute as scheduled.
+COMMANDS:
+```bash
+# Check Cloud Scheduler cron job
+gcloud scheduler jobs list --location=asia-south1
+
+# Check Cloud Run Job execution history
+gcloud run jobs executions list --region=asia-south1
+```
+
+
+================================================================================
+7. TEARDOWN / COST PREVENTION
+================================================================================
+IMPORTANT: When you are done demonstrating or grading the project, destroy the
+cloud resources to prevent unexpected billing.
+
+WHERE: [CLOUD SHELL]
+WHY  : Deletes all Cloud Run services, Pub/Sub topics, Cloud Scheduler triggers,
+       and Firestore configurations created by Terraform.
+COMMAND:
+```bash
+cd ~/cold-chain-cloud/terraform
+terraform destroy -auto-approve
+```
+
+
+================================================================================
+8. LOCAL DEVELOPMENT ALTERNATIVE (DOCKER COMPOSE)
+================================================================================
+If you want to run the full stack entirely offline on your local machine using
+Apache Kafka KRaft, GCP Pub/Sub emulator, and Firestore emulator:
+
+WHERE: [LOCAL PC]
+
+Start all 10 containers:
+```bash
+make up
+```
+Open Kafka UI:
+  http://localhost:8082
+Open Local Dashboard:
+  http://localhost:8000
+
+Run stress throughput test (~150 msgs/sec):
+```bash
+make stress
+```
+Replay 24,000 historical records from dataset:
+```bash
+make replay
+```
+Execute automated Kafka broker failover chaos test:
+```bash
+make failover
+```
+Stop all local containers:
+```bash
+make down
+```
+
+================================================================================
+END OF RUNBOOK (run.txt)
+================================================================================
