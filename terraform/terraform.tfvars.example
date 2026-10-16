@@ -1,0 +1,13 @@
+# Example Terraform variables for ColdChain Cloud Run deployment
+project_id                  = "your-gcp-project-id"
+region                      = "asia-south1"
+environment                 = "prod"
+artifact_registry_repo_name = "coldchain-containers"
+image_tag                   = "latest"
+
+# Set Kafka servers if connecting to an existing GCE VM Kafka cluster or Managed Kafka in a VPC
+kafka_bootstrap_servers     = ""
+kafka_topic_telemetry       = "truck-telemetry"
+
+alert_cooldown_sec          = 300
+silence_timeout_sec         = 120

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ColdChain Fleet Monitoring | Real-Time Telemetry</title>
+  
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="brand-icon">❄️</div>
+        <div class="brand-text">
+          <h1>ColdChain<span class="highlight">Fleet</span></h1>
+          <p class="subtitle">Real-Time Cold Chain Fleet Telemetry & Driver Alert System</p>
+        </div>
+      </div>
+
+      <!-- Top Navigation Tabs -->
+      <nav class="nav-tabs">
+        <a href="index.html" class="nav-tab active">🗺️ Fleet Operations Dashboard</a>
+        <a href="simulator.html" class="nav-tab">🎛️ Telemetry Test Studio</a>
+      </nav>
+
+      <div class="header-status">
+        <div class="sync-indicator">
+          <span class="pulse-dot"></span>
+          <span id="live-indicator">LIVE STREAMING (3s)</span>
+        </div>
+        <div class="last-sync" id="last-sync-time">Connecting...</div>
+      </div>
+    </header>
+
+    <!-- Top KPI Cards -->
+    <section class="kpi-grid">
+      <div class="kpi-card total">
+        <div class="kpi-label">Active Trucks</div>
+        <div class="kpi-val" id="kpi-total">15</div>
+        <div class="kpi-sub">Monitored routes</div>
+      </div>
+      <div class="kpi-card ok">
+        <div class="kpi-label">Optimal (OK)</div>
+        <div class="kpi-val text-green" id="kpi-ok">0</div>
+        <div class="kpi-sub">Normal temperature</div>
+      </div>
+      <div class="kpi-card warning">
+        <div class="kpi-label">Warning</div>
+        <div class="kpi-val text-amber" id="kpi-warning">0</div>
+        <div class="kpi-sub">Excess &ge; 2.0&deg;C</div>
+      </div>
+      <div class="kpi-card alert">
+        <div class="kpi-label">Critical Alerts</div>
+        <div class="kpi-val text-red" id="kpi-alert">0</div>
+        <div class="kpi-sub">Severe excursion</div>
+      </div>
+      <div class="kpi-card no-signal">
+        <div class="kpi-label">No Signal</div>
+        <div class="kpi-val text-grey" id="kpi-nosignal">0</div>
+        <div class="kpi-sub">Silent &gt; 120s</div>
+      </div>
+    </section>
+
+    <!-- Fleet Crisis & Tension Simulation Engine -->
+    <section class="card crisis-panel">
+      <div class="crisis-header">
+        <div class="crisis-title-wrap">
+          <div class="crisis-badge">⚡ FLEET CRISIS & TENSION SIMULATOR</div>
+          <span class="crisis-desc">Select target vehicles & trigger simultaneous mass emergencies to test real-time alerting, pipeline throughput & incident response</span>
+        </div>
+        <div class="crisis-selectors">
+          <span class="selection-pill" id="crisis-selected-count">15 / 15 Selected</span>
+          <button type="button" class="btn-chip" id="btn-select-all">Select All</button>
+          <button type="button" class="btn-chip" id="btn-select-none">Clear</button>
+          <button type="button" class="btn-chip" id="btn-select-chilled">Chilled Only</button>
+          <button type="button" class="btn-chip" id="btn-select-frozen">Frozen Only</button>
+        </div>
+      </div>
+
+      <!-- Interactive 15-Truck Selector Grid -->
+      <div class="truck-chips-grid" id="truck-chips-grid"></div>
+
+      <!-- Emergency Action Triggers -->
+      <div class="crisis-actions-bar">
+        <div class="crisis-triggers">
+          <button type="button" class="btn-crisis btn-crisis-heatwave" id="btn-crisis-heatwave" title="Spike cargo temperature +8.5°C above setpoint across selected trucks">
+            🔥 Heatwave Spike (+8.5°C)
+          </button>
+          <button type="button" class="btn-crisis btn-crisis-door" id="btn-crisis-door" title="Swing cargo doors open on selected trucks simultaneously">
+            🚪 Multi-Door Breach (Doors Open)
+          </button>
+          <button type="button" class="btn-crisis btn-crisis-cascade" id="btn-crisis-cascade" title="Cascade random emergencies truck-by-truck every 600ms to produce escalating tension">
+            🎲 Chaos Cascade (Mounting Tension)
+          </button>
+        </div>
+        <div class="crisis-restore-wrap">
+          <button type="button" class="btn-crisis btn-crisis-restore" id="btn-crisis-restore" title="Restore all selected trucks back to normal setpoint and optimal green state">
+            ✅ Restabilize Fleet (Restore Optimal)
+          </button>
+        </div>
+      </div>
+      <div class="crisis-feedback-banner" id="crisis-feedback" style="display:none;"></div>
+    </section>
+
+    <!-- Main Workspace -->
+    <main class="main-content">
+      <!-- Left Column: Map & Table -->
+      <div class="left-pane">
+        <!-- Interactive Map -->
+        <div class="card map-card">
+          <div class="card-header">
+            <div class="card-title">🗺️ Live Fleet Tracking Map</div>
+            <div class="map-controls-header">
+              <button id="btn-fit-bounds" class="btn-map-control" title="Zoom to fit all active trucks">🎯 Fit Fleet</button>
+              <div class="map-legend">
+                <span class="legend-item"><span class="dot dot-green"></span> OK</span>
+                <span class="legend-item"><span class="dot dot-amber"></span> WARNING</span>
+                <span class="legend-item"><span class="dot dot-red"></span> ALERT</span>
+                <span class="legend-item"><span class="dot dot-grey"></span> NO SIGNAL</span>
+              </div>
+            </div>
+          </div>
+          <div id="map" class="map-view"></div>
+        </div>
+
+        <!-- Fleet Table -->
+        <div class="card table-card">
+          <div class="card-header">
+            <div class="card-title">🚛 Real-Time Truck Telemetry Status</div>
+            <div class="badge-counter" id="truck-count-badge">15 Trucks</div>
+          </div>
+          <div class="table-container">
+            <table class="status-table">
+              <thead>
+                <tr>
+                  <th>Truck ID</th>
+                  <th>Status</th>
+                  <th>Cargo Temp</th>
+                  <th>Setpoint</th>
+                  <th>Excess</th>
+                  <th>Door</th>
+                  <th>Speed</th>
+                  <th>Fuel</th>
+                  <th>Last Ping</th>
+                </tr>
+              </thead>
+              <tbody id="truck-tbody">
+                <tr><td colspan="9" class="loading-cell">Awaiting telemetry stream...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Alerts Feed & Detail Drawer -->
+      <aside class="right-pane">
+        <div class="card alerts-card">
+          <div class="card-header">
+            <div class="card-title">🚨 Driver Alert & Incident Feed</div>
+            <span class="badge-alert-count" id="alert-count-pill">0 Alerts</span>
+          </div>
+          <div class="alerts-feed" id="alerts-container">
+            <div class="empty-alerts">No active critical alerts. All shipments secure.</div>
+          </div>
+        </div>
+
+        <!-- Pipeline Diagnostics Card -->
+        <div class="card sys-card">
+          <div class="card-header">
+            <div class="card-title">⚙️ Pipeline Health</div>
+          </div>
+          <div class="sys-list">
+            <div class="sys-item">
+              <span>Kafka Cluster (KRaft)</span>
+              <span class="pill-badge pill-green" id="health-kafka">CHECKING…</span>
+            </div>
+            <div class="sys-item">
+              <span>Pub/Sub Bridge</span>
+              <span class="pill-badge pill-green" id="health-pubsub">CHECKING…</span>
+            </div>
+            <div class="sys-item">
+              <span>Firestore Emulator</span>
+              <span class="pill-badge pill-green" id="health-firestore">CHECKING…</span>
+            </div>
+            <div class="sys-item">
+              <span>Raw Data Archiver</span>
+              <span class="pill-badge pill-gold" id="health-archiver">GZ JSONL LOGGING</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Throughput Meter Card -->
+        <div class="card sys-card" style="margin-top:12px;">
+          <div class="card-header">
+            <div class="card-title">📡 Live Kafka Throughput</div>
+            <span class="pill-badge" id="throughput-mode-badge" style="font-size:0.68rem;">IDLE</span>
+          </div>
+          <div style="padding: 10px 0 4px;">
+            <!-- msg/sec bar -->
+            <div style="margin-bottom:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+                <span style="font-size:0.72rem;color:#a0a0a0;">Messages / sec</span>
+                <span style="font-size:1.1rem;font-weight:700;color:#0ecb8f;" id="throughput-msgs">0</span>
+              </div>
+              <div style="background:#1e2130;border-radius:4px;height:6px;overflow:hidden;">
+                <div id="throughput-bar-msgs" style="height:6px;border-radius:4px;background:linear-gradient(90deg,#0ecb8f,#22d48a);width:0%;transition:width 0.5s ease;"></div>
+              </div>
+            </div>
+            <!-- KB/sec bar -->
+            <div style="margin-bottom:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+                <span style="font-size:0.72rem;color:#a0a0a0;">Data Rate</span>
+                <span style="font-size:1.1rem;font-weight:700;color:#e6a817;" id="throughput-kbs">0 KB/s</span>
+              </div>
+              <div style="background:#1e2130;border-radius:4px;height:6px;overflow:hidden;">
+                <div id="throughput-bar-kbs" style="height:6px;border-radius:4px;background:linear-gradient(90deg,#e6a817,#f97316);width:0%;transition:width 0.5s ease;"></div>
+              </div>
+            </div>
+            <!-- Total & uptime row -->
+            <div style="display:flex;justify-content:space-between;padding-top:6px;border-top:1px solid #1e2130;">
+              <div style="text-align:center;">
+                <div style="font-size:0.65rem;color:#a0a0a0;margin-bottom:2px;">Total Msgs (this session)</div>
+                <div style="font-size:0.9rem;font-weight:700;color:#ffffff;" id="throughput-total">—</div>
+              </div>
+              <div style="text-align:center;">
+                <div style="font-size:0.65rem;color:#a0a0a0;margin-bottom:2px;">Uptime</div>
+                <div style="font-size:0.9rem;font-weight:700;color:#ffffff;" id="throughput-uptime">—</div>
+              </div>
+              <div style="text-align:center;">
+                <div style="font-size:0.65rem;color:#a0a0a0;margin-bottom:2px;">Mode</div>
+                <div style="font-size:0.9rem;font-weight:700;" id="throughput-mode-text">IDLE</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js?v=2"></script>
+</body>
+</html>

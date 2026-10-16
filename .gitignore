@@ -1,0 +1,32 @@
+# Environment & Secrets
+.env
+*.env.local
+
+# Python Bytecode & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Testing & Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Data Archives & Runtime Storage
+data/archive/
+/archive/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.antigravityMem/
+.recall_scratchpad.md
