@@ -128,6 +128,19 @@ if ! terraform state list | grep -q "google_artifact_registry_repository.contain
     google_artifact_registry_repository.containers "$REPO_ID" 2>/dev/null || true
 fi
 
+# If Firestore database already exists, import it to prevent 409 Conflict
+if ! terraform state list | grep -q "google_firestore_database.database"; then
+  if gcloud firestore databases describe --database="(default)" --project="$PROJECT_ID" >/dev/null 2>&1; then
+    echo "Importing existing Firestore (default) database into Terraform state..."
+    terraform import \
+      -var="project_id=${PROJECT_ID}" \
+      -var="region=${REGION}" \
+      -var="artifact_registry_repo_name=${REPO_NAME}" \
+      -var="image_tag=${IMAGE_TAG}" \
+      google_firestore_database.database "(default)" 2>/dev/null || true
+  fi
+fi
+
 terraform apply \
   -var="project_id=${PROJECT_ID}" \
   -var="region=${REGION}" \
