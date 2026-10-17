@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --scrollbar-thumb: #3A2B20;
+  --scrollbar-track: #12100F;
+}
+
+* {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: thin;
+}
+
+@supports not (scrollbar-color: auto) {
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+}
+
+/* Custom dark tile styling for Leaflet */
+.leaflet-container {
+  background: #1B1410 !important;
+  font-family: inherit;
+}
+
+.dark-tiles .leaflet-tile-pane {
+  filter: brightness(0.7) invert(1) contrast(3) hue-rotate(180deg) saturate(0.3);
+}
+
+.leaflet-popup-content-wrapper {
+  background: #1A140D !important;
+  color: #F5F0E1 !important;
+  border: 1px solid #3A2B20 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-popup-tip {
+  background: #1A140D !important;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.92); }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+

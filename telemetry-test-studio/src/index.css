@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --scrollbar-thumb: #2A3324;
+  --scrollbar-track: #0A0F0A;
+}
+
+* {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-width: thin;
+}
+
+@supports not (scrollbar-color: auto) {
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+  }
+  *::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+}
+
+.leaflet-container {
+  background: #111810 !important;
+  font-family: inherit;
+}
+
+.dark-tiles .leaflet-tile-pane {
+  filter: brightness(0.7) invert(1) contrast(3) hue-rotate(180deg) saturate(0.3);
+}
+
+.leaflet-popup-content-wrapper {
+  background: #151A14 !important;
+  color: #F5F0E1 !important;
+  border: 1px solid #2A3324 !important;
+  border-radius: 8px !important;
+}
+
+.leaflet-popup-tip {
+  background: #151A14 !important;
+}
+

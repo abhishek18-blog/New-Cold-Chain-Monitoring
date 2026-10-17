@@ -1,0 +1,21 @@
+{
+  "name": "cold-chain-cloud-ui",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "fleet-operations-dashboard",
+    "telemetry-test-studio",
+    "historical-analytics"
+  ],
+  "scripts": {
+    "dev:fleet": "npm run dev --workspace=fleet-operations-dashboard",
+    "dev:studio": "npm run dev --workspace=telemetry-test-studio",
+    "dev:analytics": "npm run dev --workspace=historical-analytics",
+    "build:fleet": "npm run build --workspace=fleet-operations-dashboard",
+    "build:studio": "npm run build --workspace=telemetry-test-studio",
+    "build:analytics": "npm run build --workspace=historical-analytics",
+    "build:all": "npm run build --workspaces",
+    "build:static": "npm run build:all && node scripts/sync_static.js"
+  }
+}
+

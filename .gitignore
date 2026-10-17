@@ -30,3 +30,8 @@ data/archive/
 .DS_Store
 .antigravityMem/
 .recall_scratchpad.md
+
+# Node / Frontend
+node_modules/
+dist/
+
