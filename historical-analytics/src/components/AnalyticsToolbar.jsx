@@ -41,8 +41,8 @@ export default function AnalyticsToolbar({
   const handleExportCSV = () => {
     let csv = "Incident ID,Timestamp,Truck ID,Route,Cargo,Setpoint,Peak Temp,Delta,Duration,Root Cause,Driver,Status\n";
     const dataToExport = auditRecords && auditRecords.length > 0 ? auditRecords : [
-      { id: "CC-261017-042", time: "2026-10-17 03:14:12 UTC", truck: "TRK-007", route: "Pune -> Hyderabad", cargo: "Chilled", setpoint: "4.0C", peakTemp: "9.5C", delta: "+5.5C", duration: "2.5 min", cause: "Reefer Compressor Failure", driver: "Arjun Mehta", status: "OPEN" },
-      { id: "CC-261017-041", time: "2026-10-17 03:12:08 UTC", truck: "TRK-014", route: "Hyderabad -> Bengaluru", cargo: "Frozen", setpoint: "-18.0C", peakTemp: "-10.5C", delta: "+7.5C", duration: "4.6 min", cause: "Door Left Ajar", driver: "Ravi Nair", status: "RESOLVED" }
+      { id: "CC-261017-042", time: "2026-10-17 16:14:12 IST", truck: "TRK-007", route: "Pune -> Hyderabad", cargo: "Chilled", setpoint: "4.0C", peakTemp: "9.5C", delta: "+5.5C", duration: "2.5 min", cause: "Reefer Compressor Failure", driver: "Arjun Mehta", status: "OPEN" },
+      { id: "CC-261017-041", time: "2026-10-17 16:12:08 IST", truck: "TRK-014", route: "Hyderabad -> Bengaluru", cargo: "Frozen", setpoint: "-18.0C", peakTemp: "-10.5C", delta: "+7.5C", duration: "4.6 min", cause: "Door Left Ajar", driver: "Ravi Nair", status: "RESOLVED" }
     ];
 
     dataToExport.forEach(r => {

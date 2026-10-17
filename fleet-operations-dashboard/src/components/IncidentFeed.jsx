@@ -17,7 +17,22 @@ const DRIVER_DIRECTORY = {
   'TRK-013': { driver: 'Biplab Barua', phone: '+91 90000 01013' },
   'TRK-014': { driver: 'Ravi Nair', phone: '+91 90000 01014' },
   'TRK-015': { driver: 'Ganesh Kamath', phone: '+91 90000 01015' },
+  'TRK-016': { driver: 'Abhishek Deshmukh', phone: '+91 90222 90311' },
 };
+
+function formatISTTime(ts) {
+  if (!ts) return new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) + ' IST';
+  try {
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) + ' IST';
+    }
+  } catch (e) {}
+  if (typeof ts === 'string') {
+    return ts.replace('UTC', 'IST');
+  }
+  return String(ts);
+}
 
 export default function IncidentFeed({ alerts = [] }) {
   // If no backend alerts yet, fallback to canonical Figma incidents
@@ -25,7 +40,7 @@ export default function IncidentFeed({ alerts = [] }) {
     {
       id: 'mock-1',
       truck_id: 'TRK-007',
-      created_at: '03:14:12 UTC',
+      created_at: '16:14:12 IST',
       excess_temp_c: 5.5,
       cargo_temp_c: 9.5,
       setpoint_c: 4.0,
@@ -36,7 +51,7 @@ export default function IncidentFeed({ alerts = [] }) {
     {
       id: 'mock-2',
       truck_id: 'TRK-014',
-      created_at: '03:12:08 UTC',
+      created_at: '16:12:08 IST',
       excess_temp_c: 7.5,
       cargo_temp_c: -10.5,
       setpoint_c: -18.0,
@@ -47,7 +62,7 @@ export default function IncidentFeed({ alerts = [] }) {
     {
       id: 'mock-3',
       truck_id: 'TRK-003',
-      created_at: '03:10:32 UTC',
+      created_at: '16:10:32 IST',
       excess_temp_c: 2.4,
       cargo_temp_c: -15.6,
       setpoint_c: -18.0,
@@ -98,9 +113,7 @@ export default function IncidentFeed({ alerts = [] }) {
                     {tid}
                   </span>
                   <span className="text-[10px] font-mono text-[#8A7A6A]">
-                    {typeof inc.created_at === 'string' && inc.created_at.includes('T')
-                      ? inc.created_at.split('T')[1].slice(0, 8) + ' UTC'
-                      : (inc.created_at || '03:14:12 UTC')}
+                    {formatISTTime(inc.created_at)}
                   </span>
                 </div>
 

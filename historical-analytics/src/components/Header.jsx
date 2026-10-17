@@ -2,7 +2,9 @@ import React from 'react';
 import { LayoutDashboard, FlaskConical, BarChart3 } from 'lucide-react';
 
 export default function Header() {
-  const syncTime = new Date().toLocaleTimeString('en-US', { hour12: false }) + ' UTC · 17 Oct 2026';
+  const syncTime = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) +
+    ' IST · ' +
+    new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
 
   return (
     <header className="bg-[#1A140D] border-b border-[#3A2B20] text-[#F5F0E1] px-4 lg:px-8 py-3.5 select-none">

@@ -284,7 +284,8 @@ services:
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-coldchain-local}
       PUBSUB_EMULATOR_HOST: "pubsub-emulator:8085"
       PUBSUB_ALERTS_SUB: ${PUBSUB_ALERTS_SUB:-alerts-sub}
-      ALERT_COOLDOWN_SEC: "${ALERT_COOLDOWN_SEC:-300}"
+      ALERT_COOLDOWN_SEC: "${ALERT_COOLDOWN_SEC:-900}"
+      FAST2SMS_API_KEY: "${FAST2SMS_API_KEY:-gonFrx9EB2estW7qyRYdpMhK8ia4LDuZvlJfQVCzcSAwIPb60OAa5MFRwg3Y6hWKesurm2ZpXTUx4OLN}"
     depends_on:
       pubsub-init:
         condition: service_completed_successfully

@@ -1,4 +1,9 @@
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "alert-notifier")))
 import time
 from notifier import (
     FLEET_DRIVERS,

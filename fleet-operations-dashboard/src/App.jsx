@@ -51,7 +51,9 @@ export default function App() {
       }
 
       const now = new Date();
-      setLastSync(now.toISOString().split('T')[1].slice(0, 8) + ' UTC · 17 Oct 2026');
+      const timeStr = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+      const dateStr = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+      setLastSync(`${timeStr} IST · ${dateStr}`);
     } catch (err) {
       console.error('Data fetch error:', err);
     }

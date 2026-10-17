@@ -17,6 +17,7 @@ const ROUTE_INFO = {
   'TRK-013': { route: 'Guwahati → Shillong', type: 'Frozen' },
   'TRK-014': { route: 'Bhopal → Jabalpur', type: 'Chilled' },
   'TRK-015': { route: 'Mangaluru → Udupi', type: 'Deep Freeze' },
+  'TRK-016': { route: 'Pune → Mumbai', type: 'Pharma / Vaccines' },
 };
 
 export default function TelemetryTable({ trucks = [], onSelectTruck, selectedTruckId }) {
@@ -84,7 +85,7 @@ export default function TelemetryTable({ trucks = [], onSelectTruck, selectedTru
               <th className="py-2.5 px-3 text-center">Door State</th>
               <th className="py-2.5 px-3 text-right">Speed<br/><span className="text-[10px] text-[#8A7A6A]">km/h</span></th>
               <th className="py-2.5 px-3 text-right">Fuel<br/><span className="text-[10px] text-[#8A7A6A]">%</span></th>
-              <th className="py-2.5 px-3.5 text-right">Last Telemetry<br/><span className="text-[10px] text-[#8A7A6A]">Ping</span></th>
+              <th className="py-2.5 px-3.5 text-right">Last Telemetry<br/><span className="text-[10px] text-[#8A7A6A]">Time (IST)</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#3A2B20]/60">
@@ -158,8 +159,14 @@ export default function TelemetryTable({ trucks = [], onSelectTruck, selectedTru
                       </div>
                     </div>
                   </td>
-                  <td className="py-2.5 px-3.5 text-right font-mono text-[11px] text-[#8A7A6A]">
-                    2s ago
+                  <td className="py-2.5 px-3.5 text-right font-mono text-[11px] text-[#C9B7A8]">
+                    {truck.last_ts || truck.updated_at ? (
+                      <span>
+                        {new Date(truck.last_ts || truck.updated_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST
+                      </span>
+                    ) : (
+                      <span>{new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })} IST</span>
+                    )}
                   </td>
                 </tr>
               );

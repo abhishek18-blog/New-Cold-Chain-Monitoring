@@ -35,8 +35,14 @@ FLEET_DRIVERS: Dict[str, Dict[str, str]] = {
     "TRK-012": {"name": "Anil Deshmukh", "phone": "+91-98201-11012", "cargo": "Antibiotics & Serum", "route": "Aurangabad → Pune"},
     "TRK-013": {"name": "Vijay More", "phone": "+91-98201-11013", "cargo": "Confectionery & Chocolates", "route": "Satara → Mumbai"},
     "TRK-014": {"name": "Nitin Sawant", "phone": "+91-98201-11014", "cargo": "Fresh Berries", "route": "Mahabaleshwar → Pune"},
-    "TRK-015": {"name": "Sachin Shinde", "phone": "+91-98201-11015", "cargo": "Refrigerated Chemicals", "route": "Vapi → Mumbai"}
+    "TRK-015": {"name": "Sachin Shinde", "phone": "+91-98201-11015", "cargo": "Refrigerated Chemicals", "route": "Vapi → Mumbai"},
+    "TRK-016": {"name": "Abhishek Deshmukh", "phone": "+91-90222-90311", "cargo": "Vaccines & Pharma", "route": "Pune → Mumbai"}
 }
+
+from alert_manager import AlertManager, send_fast2sms, DEFAULT_FAST2SMS_KEY
+
+FAST2SMS_API_KEY = os.environ.get("FAST2SMS_API_KEY", DEFAULT_FAST2SMS_KEY)
+alert_manager = AlertManager(api_key=FAST2SMS_API_KEY)
 
 # In-memory cooldown tracker to prevent notification spamming per truck
 # Maps truck_id -> last_notified_epoch_timestamp
@@ -88,10 +94,11 @@ def format_driver_sms(truck_id: str, alert_data: Dict[str, Any], driver_info: Di
 
 def dispatch_driver_sms(driver_phone: str, message_text: str):
     """
-    Dispatch SMS via SMS Gateway (Twilio / AWS SNS / Meta WhatsApp).
-    In local container environment, logs the exact dispatch payload.
+    Dispatch SMS via Fast2SMS Quick SMS gateway (route='q').
+    Logs the exact dispatch payload and returns response.
     """
-    logger.info("📱 [SMS GATEWAY DISPATCH] To: %s | Message:\n%s", driver_phone, message_text)
+    logger.info("📱 [FAST2SMS GATEWAY DISPATCH (route='q')] To: %s | Message:\n%s", driver_phone, message_text)
+    return send_fast2sms(FAST2SMS_API_KEY, driver_phone, message_text)
 
 def dispatch_in_cab_telematics_downlink(truck_id: str, alert_data: Dict[str, Any]):
     """

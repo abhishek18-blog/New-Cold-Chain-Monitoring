@@ -6,7 +6,7 @@ const AUDIT_RECORDS = [
     id: 'CC-261017-042',
     severity: 'CRITICAL',
     date: '17 Oct 2026',
-    time: '03:14:12 UTC',
+    time: '16:14:12 IST',
     truck: 'TRK-007',
     route: 'Pune → Hyderabad',
     cargo: 'Chilled',
@@ -17,8 +17,8 @@ const AUDIT_RECORDS = [
     ongoing: true,
     cause: 'Reefer Compressor Failure',
     driver: 'Arjun Mehta',
-    smsDelivered: 'SMS delivered 03:14:14',
-    acknowledged: 'Driver acknowledged 03:14:31',
+    smsDelivered: 'SMS delivered 16:14:14',
+    acknowledged: 'Driver acknowledged 16:14:31',
     note: 'Pullover requested; backup reefer dispatched from Solapur.',
     status: 'OPEN · intervention in progress',
     statusColor: 'text-[#F59E0B]'
@@ -27,7 +27,7 @@ const AUDIT_RECORDS = [
     id: 'CC-261017-041',
     severity: 'CRITICAL',
     date: '17 Oct 2026',
-    time: '03:12:08 UTC',
+    time: '16:12:08 IST',
     truck: 'TRK-014',
     route: 'Hyderabad → Bengaluru',
     cargo: 'Frozen',
@@ -38,17 +38,17 @@ const AUDIT_RECORDS = [
     ongoing: false,
     cause: 'Cargo Door Breach',
     driver: 'Ravi Nair',
-    smsDelivered: 'SMS delivered 03:12:10',
+    smsDelivered: 'SMS delivered 16:12:10',
     acknowledged: 'In-cab alarm sounded · receipt confirmed',
     note: 'Door closed by driver at toll plaza. Reefer restored.',
-    status: 'RESOLVED · 03:16:42 UTC',
+    status: 'RESOLVED · 16:16:42 IST',
     statusColor: 'text-[#34D399]'
   },
   {
     id: 'CC-261017-040',
     severity: 'WARNING',
     date: '17 Oct 2026',
-    time: '03:10:32 UTC',
+    time: '16:10:32 IST',
     truck: 'TRK-003',
     route: 'Kochi → Pondicherry',
     cargo: 'Frozen',
@@ -59,17 +59,17 @@ const AUDIT_RECORDS = [
     ongoing: false,
     cause: 'Extreme Ambient Heatwave Spike',
     driver: 'Anoop Nair',
-    smsDelivered: 'SMS delivered 03:10:35',
-    acknowledged: 'Driver acknowledged 03:11:00',
+    smsDelivered: 'SMS delivered 16:10:35',
+    acknowledged: 'Driver acknowledged 16:11:00',
     note: 'Auxiliary cooling booster triggered. Safe temp restored.',
-    status: 'RESOLVED · 03:22:32 UTC',
+    status: 'RESOLVED · 16:22:32 IST',
     statusColor: 'text-[#34D399]'
   },
   {
     id: 'CC-261017-039',
     severity: 'WARNING',
     date: '17 Oct 2026',
-    time: '02:45:18 UTC',
+    time: '15:45:18 IST',
     truck: 'TRK-011',
     route: 'Delhi → Lucknow',
     cargo: 'Chilled',
@@ -80,17 +80,17 @@ const AUDIT_RECORDS = [
     ongoing: false,
     cause: 'Door Left Ajar at Inspection Point',
     driver: 'Manoj Sharma',
-    smsDelivered: 'SMS delivered 02:45:20',
-    acknowledged: 'Driver acknowledged 02:46:05',
+    smsDelivered: 'SMS delivered 15:45:20',
+    acknowledged: 'Driver acknowledged 15:46:05',
     note: 'Inspection latch secured. Thermal seal re-established.',
-    status: 'RESOLVED · 02:53:30 UTC',
+    status: 'RESOLVED · 15:53:30 IST',
     statusColor: 'text-[#34D399]'
   },
   {
     id: 'CC-261017-038',
     severity: 'WARNING',
     date: '17 Oct 2026',
-    time: '01:22:05 UTC',
+    time: '14:22:05 IST',
     truck: 'TRK-002',
     route: 'Mumbai → Pune',
     cargo: 'Chilled',
@@ -101,10 +101,10 @@ const AUDIT_RECORDS = [
     ongoing: false,
     cause: 'Traffic Congestion Ambient Heat',
     driver: 'Vikram Joshi',
-    smsDelivered: 'SMS delivered 01:22:08',
-    acknowledged: 'Driver acknowledged 01:22:45',
+    smsDelivered: 'SMS delivered 14:22:08',
+    acknowledged: 'Driver acknowledged 14:22:45',
     note: 'Ghat section clearance, thermal recovery normal.',
-    status: 'RESOLVED · 01:28:05 UTC',
+    status: 'RESOLVED · 14:28:05 IST',
     statusColor: 'text-[#34D399]'
   }
 ];
@@ -138,7 +138,7 @@ export default function RegulatoryAuditLog({ auditRecords = [], selectedScope = 
             Historical Regulatory Audit Log
           </h2>
           <p className="text-xs text-[#8A7A6A] mt-0.5">
-            Immutable incident records · {selectedScope === 'all' ? 'All fleet corridors' : selectedScope} · timestamps and delivery acknowledgments in UTC
+            Immutable incident records · {selectedScope === 'all' ? 'All fleet corridors' : selectedScope} · timestamps and delivery acknowledgments in Indian Standard Time (IST)
           </p>
         </div>
         <div className="px-2.5 py-1 rounded bg-[#2A2A2A] text-xs font-mono font-medium text-[#F5E6D3] border border-[#3A3A3A] self-start sm:self-auto">
@@ -187,7 +187,7 @@ export default function RegulatoryAuditLog({ auditRecords = [], selectedScope = 
           <thead>
             <tr className="bg-[#141414] border-b border-[#2A2A2A] text-[#8A7A6A] text-[11px]">
               <th className="py-2.5 px-3.5">Incident Reference ID</th>
-              <th className="py-2.5 px-3">Timestamp UTC</th>
+              <th className="py-2.5 px-3">Timestamp (IST)</th>
               <th className="py-2.5 px-3">Truck ID & Route</th>
               <th className="py-2.5 px-3">Cargo Type</th>
               <th className="py-2.5 px-3 text-right">Peak Temp °C</th>

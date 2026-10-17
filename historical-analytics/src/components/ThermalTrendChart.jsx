@@ -235,7 +235,7 @@ export default function ThermalTrendChart({ data = [], scope = 'all', truckMeta 
                 filter="drop-shadow(0 4px 12px rgba(0,0,0,0.8))"
               />
               <text x="10" y="18" fill="#F5E6D3" fontSize="11" fontWeight="bold" fontFamily="sans-serif">
-                {hoveredPoint.time} UTC
+                {hoveredPoint.time} IST
               </text>
               <text x="10" y="34" fill={hoveredPoint.temp > (sp + 2) ? '#EF4444' : '#F59E0B'} fontSize="11" fontWeight="bold" fontFamily="monospace">
                 Temp: {hoveredPoint.temp > 0 ? `+${hoveredPoint.temp.toFixed(1)}` : hoveredPoint.temp.toFixed(1)}°C

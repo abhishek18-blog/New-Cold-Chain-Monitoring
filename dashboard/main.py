@@ -167,6 +167,15 @@ TRUCK_HIGHWAY_ROUTES = {
         "sp": -22.0,
         "fuel_pct": 91.0,
         "waypoints": [(12.9141, 74.8560), (13.0980, 74.7920), (13.2240, 74.7650), (13.3409, 74.7421)]
+    },
+    "TRK-016": {
+        "route": "Pune → Mumbai",
+        "corridor": "Mumbai-Pune Expressway",
+        "sp": 4.0,
+        "fuel_pct": 88.0,
+        "driver": "Abhishek Deshmukh",
+        "phone": "9022290311",
+        "waypoints": [(18.5204, 73.8567), (18.7521, 73.4022), (18.9890, 73.1120), (19.0760, 72.8777)]
     }
 }
 

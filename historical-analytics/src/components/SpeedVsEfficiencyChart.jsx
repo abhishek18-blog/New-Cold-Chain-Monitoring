@@ -210,7 +210,7 @@ export default function SpeedVsEfficiencyChart({ data = [], scope = 'all' }) {
                 filter="drop-shadow(0 4px 14px rgba(0,0,0,0.85))"
               />
               <text x="10" y="18" fill="#F5E6D3" fontSize="11" fontWeight="bold" fontFamily="sans-serif">
-                {hoveredPoint.time} UTC Telemetry
+                {hoveredPoint.time} IST Telemetry
               </text>
               <text x="10" y="34" fill="#38BDF8" fontSize="10.5" fontWeight="bold" fontFamily="monospace">
                 Transit Speed: {hoveredPoint.speed_kmph} km/h

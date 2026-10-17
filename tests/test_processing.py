@@ -1,4 +1,9 @@
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "processor")))
 from processing import classify, STATUS_OK, STATUS_WARNING, STATUS_ALERT
 
 def test_classify_optimal_temperature():
