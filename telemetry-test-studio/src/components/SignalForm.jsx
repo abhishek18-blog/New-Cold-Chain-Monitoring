@@ -17,6 +17,7 @@ const VEHICLES = [
   { id: 'TRK-013', route: 'Guwahati → Shillong', type: 'Chilled', sp: -18.0, lat: 26.1445, lon: 91.7362 },
   { id: 'TRK-014', route: 'Bhopal → Jabalpur', type: 'Frozen', sp: 4.0, lat: 23.2599, lon: 77.4126 },
   { id: 'TRK-015', route: 'Mangaluru → Udupi', type: 'Frozen', sp: -22.0, lat: 12.9141, lon: 74.8560 },
+  { id: 'TRK-016', route: 'Pune → Mumbai', type: 'Pharma / Vaccines', sp: 4.0, lat: 18.5204, lon: 73.8567 },
 ];
 
 const CITY_PRESETS = [
@@ -412,7 +413,7 @@ export default function SignalForm({
           </div>
         </div>
 
-        {/* Section 05: Submission Actions & 1,000 msg/s Kafka Blaster */}
+        {/* Section 05: Submission Actions & 1,000 msg/s Pub/Sub Blaster */}
         <div className="pt-3 border-t border-[#2A3324] space-y-3">
           {/* Target Rate Selector */}
           <div className="flex items-center justify-between text-xs bg-[#151A14] px-3 py-2 rounded border border-[#2A3324]">
@@ -453,7 +454,7 @@ export default function SignalForm({
             ) : (
               <>
                 <Play className="w-4 h-4 fill-white" />
-                <span>⚡ Blast High-Velocity Stream ({blastRate.toLocaleString()} msg/sec to Kafka)</span>
+                <span>⚡ Blast High-Velocity Stream ({blastRate.toLocaleString()} msg/sec to Pub/Sub)</span>
               </>
             )}
           </button>
@@ -485,11 +486,11 @@ export default function SignalForm({
               <span className={`w-2 h-2 rounded-full ${isContinuousSimulating ? 'bg-[#EF4444] animate-ping' : 'bg-[#22C55E]'}`}></span>
               <span className={isContinuousSimulating ? 'text-[#FCA5A5] font-bold' : 'text-[#34D399]'}>
                 {isContinuousSimulating
-                  ? `⚡ KAFKA STRESS ACTIVE: ${streamMps ? streamMps.toFixed(0) : blastRate} msg/s`
+                  ? `⚡ PUBSUB STREAM ACTIVE: ${streamMps ? streamMps.toFixed(0) : blastRate} msg/s`
                   : 'STREAM ENGINE IDLE'}
               </span>
             </div>
-            <span>TARGET TOPIC: truck-telemetry</span>
+            <span>TARGET TOPIC: telemetry-topic</span>
           </div>
         </div>
       </form>

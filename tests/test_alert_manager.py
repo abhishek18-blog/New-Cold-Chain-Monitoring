@@ -6,7 +6,7 @@ Testing all 4 rules:
 2. State Lock & Cooldown Timer (15-minute / 900s cooldown; 50 consecutive breaches = only 1 alert)
    + Critical Escalation (+5°C rise bypasses cooldown)
 3. Hysteresis / Recovery Reset (Drops >= 1.0°C below threshold for 3 consecutive readings)
-4. Fast2SMS integration & 16th Driver (Abhishek Deshmukh) registry verification
+4. Alert Dispatch integration & 16th Driver (Abhishek Deshmukh) registry verification
 """
 
 import sys
@@ -15,21 +15,20 @@ import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "alert-notifier")))
 
-from alert_manager import AlertManager, AlertDecision, FLEET_DRIVERS, DEFAULT_FAST2SMS_KEY
+from alert_manager import AlertManager, AlertDecision, FLEET_DRIVERS
 
 
 class TestAlertManager(unittest.TestCase):
 
     def setUp(self):
-        # Create manager with disabled actual SMS network call for deterministic testing
+        # Create manager with deterministic testing settings
         self.mgr = AlertManager(
-            api_key=DEFAULT_FAST2SMS_KEY,
             cooldown_seconds=900.0,       # 15 minutes
             debounce_breach_count=3,
             hysteresis_recovery_count=3,
             hysteresis_margin_c=1.0,
             escalation_delta_c=5.0,
-            enabled_sms=False             # Mock dispatch in unit tests
+            enabled_sms=False
         )
 
     def test_driver_16_registry(self):
@@ -182,11 +181,11 @@ class TestAlertManager(unittest.TestCase):
         self.assertEqual(fresh_alert.action, "ALERT")
         self.assertEqual(st.state, "IN_BREACH")
 
-    def test_rule_4_clean_kafka_consumer_integration(self):
+    def test_rule_4_clean_consumer_integration(self):
         """
-        Rule 4: Drop directly into Kafka consumer loop using process_telemetry.
+        Rule 4: Drop directly into stream consumer loop using process_telemetry.
         """
-        # Simulated Kafka JSON payload
+        # Simulated stream JSON payload
         msg_payload = {
             "truck_id": "TRK-016",
             "ts": "2026-10-17T17:00:00Z",

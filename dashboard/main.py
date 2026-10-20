@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from google.cloud import firestore
-from confluent_kafka import Producer
+from google.cloud import pubsub_v1
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,8 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger("dashboard-api")
 
 project_id = os.environ.get("GCP_PROJECT_ID", "coldchain-local")
-kafka_servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka-1:19092,kafka-2:19094")
-kafka_topic = os.environ.get("KAFKA_TOPIC_TELEMETRY", "truck-telemetry")
+ps_topic = os.environ.get("PUBSUB_TOPIC", "telemetry-topic")
 
 app = FastAPI(
     title="Cold Chain Fleet Monitoring Dashboard & High-Speed Simulator API",
@@ -46,17 +45,15 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-# Standard Kafka Producer for manual injection
-kafka_producer = None
+# Cloud Pub/Sub Publisher for direct cloud injection
+pubsub_publisher = None
+pubsub_telemetry_topic = None
 try:
-    kafka_producer = Producer({
-        'bootstrap.servers': kafka_servers,
-        'client.id': 'dashboard-simulator-producer',
-        'acks': 1
-    })
-    logger.info("Connected Kafka producer to %s for telemetry simulation", kafka_servers)
+    pubsub_publisher = pubsub_v1.PublisherClient()
+    pubsub_telemetry_topic = pubsub_publisher.topic_path(project_id, ps_topic)
+    logger.info("Connected Pub/Sub publisher to %s for cloud telemetry ingestion", pubsub_telemetry_topic)
 except Exception as e:
-    logger.warning("Could not initialize Kafka producer in dashboard: %s", e)
+    logger.info("Pub/Sub publisher initialization skipped or failed: %s", e)
 
 # In-memory history buffer of pipeline injection logs (persists across page reloads)
 injected_logs_history = deque(maxlen=300)
@@ -224,9 +221,8 @@ _blaster_state = {
 }
 
 def _blaster_producer_loop():
-    """Background daemon thread: blasts high-velocity telemetry (1,000 msg/s) to Kafka."""
+    """Background daemon thread: blasts high-velocity telemetry (1,000 msg/s) to Cloud Pub/Sub."""
     global _blaster_state
-    blaster_producer = None
     truck_keys = list(TRUCK_HIGHWAY_ROUTES.keys())
     last_log_time = time.time()
     last_rate_time = time.time()
@@ -241,21 +237,6 @@ def _blaster_producer_loop():
         # Micro-batching for high throughput: 25 messages per batch
         batch_size = max(10, target_rate // 40)
         sleep_interval = 1.0 / (target_rate / batch_size)
-
-        if blaster_producer is None:
-            try:
-                blaster_producer = Producer({
-                    'bootstrap.servers': kafka_servers,
-                    'client.id': 'dashboard-blaster-high-speed',
-                    'acks': 1,
-                    'queue.buffering.max.messages': 500000,
-                    'queue.buffering.max.kbytes': 204800,
-                    'linger.ms': 5,
-                    'compression.type': 'lz4'
-                })
-                logger.info("⚡ High-speed Kafka blaster producer connected.")
-            except Exception as pe:
-                logger.warning("Could not initialize high-speed Kafka blaster producer: %s", pe)
 
         t0 = time.time()
         now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -290,21 +271,18 @@ def _blaster_producer_loop():
                 "door_open": state["door_open"]
             }
 
-            if blaster_producer:
+            if pubsub_publisher and pubsub_telemetry_topic:
                 try:
-                    blaster_producer.produce(
-                        topic=kafka_topic,
-                        key=tid.encode('utf-8'),
-                        value=json.dumps(payload).encode('utf-8')
+                    pubsub_publisher.publish(
+                        pubsub_telemetry_topic,
+                        data=json.dumps(payload).encode('utf-8'),
+                        truck_id=tid
                     )
                 except Exception:
                     pass
 
             _blaster_state["total_sent"] += 1
             sent_in_rate_window += 1
-
-        if blaster_producer:
-            blaster_producer.poll(0)
 
         # Throughput computation
         now = time.time()
@@ -320,7 +298,7 @@ def _blaster_producer_loop():
             injected_logs_history.append({
                 "time": time_str,
                 "type": "success-msg",
-                "message": f"⚡ High-Speed Blaster: {_blaster_state['actual_mps']:.0f} msg/s delivered to Kafka '{kafka_topic}' (Total: {_blaster_state['total_sent']:,} msgs)"
+                "message": f"⚡ High-Speed Blaster: {_blaster_state['actual_mps']:.0f} msg/s delivered to Pub/Sub '{ps_topic}' (Total: {_blaster_state['total_sent']:,} msgs)"
             })
             last_log_time = now
 
@@ -381,37 +359,23 @@ def _truck_motion_ticker_loop():
 _motion_thread = threading.Thread(target=_truck_motion_ticker_loop, daemon=True)
 _motion_thread.start()
 
-# ── Live Kafka cluster throughput tracking ────────────────────────────────────
-_kafka_offset_samples: deque = deque(maxlen=10)
+# ── Live Cloud Pub/Sub stream throughput tracking ──────────────────────────────
+_pubsub_stream_samples: deque = deque(maxlen=10)
 _api_start_time: float = time.time()
+_total_telemetry_published: int = 0
 
-def _kafka_offset_sampler_loop():
-    """Background daemon thread: samples total Kafka partition offsets every 1.5s for true cluster throughput."""
-    consumer = None
+def _stream_sampler_loop():
+    """Background daemon thread: samples Pub/Sub stream throughput every 1.5s."""
+    last_count = 0
     while True:
         try:
-            if consumer is None:
-                from confluent_kafka import Consumer, TopicPartition
-                consumer = Consumer({
-                    'bootstrap.servers': kafka_servers,
-                    'group.id': 'dashboard-metrics-sampler',
-                    'enable.auto.commit': False,
-                    'auto.offset.reset': 'latest'
-                })
-            meta = consumer.list_topics(kafka_topic, timeout=3.0)
-            if kafka_topic in meta.topics:
-                partitions = [TopicPartition(kafka_topic, p) for p in meta.topics[kafka_topic].partitions]
-                total_offset = 0
-                for tp in partitions:
-                    _, hi = consumer.get_watermark_offsets(tp, timeout=2.0)
-                    total_offset += max(0, hi)
-                _kafka_offset_samples.append((time.time(), total_offset))
+            cur = _blaster_state["total_sent"] + _total_telemetry_published
+            _pubsub_stream_samples.append((time.time(), cur))
         except Exception as e:
-            logger.debug("Offset sampler poll error: %s", e)
-            consumer = None
+            logger.debug("Stream sampler poll error: %s", e)
         time.sleep(1.5)
 
-_sampler_thread = threading.Thread(target=_kafka_offset_sampler_loop, daemon=True)
+_sampler_thread = threading.Thread(target=_stream_sampler_loop, daemon=True)
 _sampler_thread.start()
 
 # Firestore client singleton
@@ -452,7 +416,7 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "project": project_id,
-        "kafka_connected": kafka_producer is not None or _blaster_state["active"],
+        "stream_connected": pubsub_publisher is not None or _blaster_state["active"],
         "firestore_connected": _db is not None,
         "high_speed_stream_active": _blaster_state["active"],
         "actual_msg_per_sec": _blaster_state["actual_mps"] if _blaster_state["active"] else 0.0
@@ -460,7 +424,7 @@ def health_check():
 
 @app.get("/api/metrics")
 def get_pipeline_metrics():
-    """Return live Kafka throughput metrics measured directly from Kafka topic offsets or blaster engine."""
+    """Return live streaming throughput metrics measured directly from Pub/Sub stream samples or blaster engine."""
     now = time.time()
     uptime_sec = int(now - _api_start_time)
     
@@ -468,7 +432,7 @@ def get_pipeline_metrics():
     total_msgs = 0
     window_sec = 0.0
 
-    samples = list(_kafka_offset_samples)
+    samples = list(_pubsub_stream_samples)
     if len(samples) >= 2:
         t_first, off_first = samples[0]
         t_last, off_last = samples[-1]
@@ -524,7 +488,7 @@ def toggle_continuous_stream(req: ContinuousStreamRequest):
         injected_logs_history.append({
             "time": time_str,
             "type": "success-msg",
-            "message": f"🚀 STARTED HIGH-SPEED STREAM: Blasting {_blaster_state['target_rate']:,} msg/sec into Kafka topic '{kafka_topic}'"
+            "message": f"🚀 STARTED HIGH-SPEED STREAM: Blasting {_blaster_state['target_rate']:,} msg/sec into Pub/Sub topic '{ps_topic}'"
         })
         logger.info("Continuous high-speed blaster STARTED at %d msg/sec", _blaster_state["target_rate"])
     else:
@@ -662,15 +626,8 @@ def clear_telemetry_logs():
 @app.post("/api/telemetry/inject")
 def inject_telemetry(req: TelemetryInjectRequest):
     """
-    Directly inject custom manipulated telemetry into the real-time Kafka event stream.
+    Directly inject custom manipulated telemetry into the real-time Pub/Sub event stream.
     """
-    global kafka_producer
-    if not kafka_producer:
-        try:
-            kafka_producer = Producer({'bootstrap.servers': kafka_servers, 'client.id': 'dashboard-simulator-producer', 'acks': 1})
-        except Exception as e:
-            logger.warning("Kafka producer unavailable: %s", e)
-
     now_iso = req.ts or datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     payload = {
         "truck_id": req.truck_id,
@@ -707,18 +664,14 @@ def inject_telemetry(req: TelemetryInjectRequest):
             st["status_reason"] = "Normal temperature range"
         st["last_ts"] = now_iso
 
-    # Produce to Kafka
-    if kafka_producer:
+    # Produce to Google Cloud Pub/Sub (cloud-native stream ingestion)
+    if pubsub_publisher and pubsub_telemetry_topic:
         try:
-            json_bytes = json.dumps(payload).encode('utf-8')
-            kafka_producer.produce(
-                topic=kafka_topic,
-                key=req.truck_id.encode('utf-8'),
-                value=json_bytes
-            )
-            kafka_producer.flush(timeout=1.0)
-        except Exception as e:
-            logger.warning("Failed to produce to Kafka: %s", e)
+            pubsub_publisher.publish(pubsub_telemetry_topic, data=json.dumps(payload).encode('utf-8'), truck_id=req.truck_id)
+            global _total_telemetry_published
+            _total_telemetry_published += 1
+        except Exception as pe:
+            logger.warning("Failed to publish telemetry to Pub/Sub: %s", pe)
 
     # Sync to Firestore
     if _db is not None:
@@ -898,23 +851,14 @@ def trigger_batch_scenario(req: BatchSimulateRequest):
             "door_open": door
         }
 
-        if kafka_producer:
+        if pubsub_publisher and pubsub_telemetry_topic:
             try:
-                kafka_producer.produce(
-                    topic=kafka_topic,
-                    key=tid.encode('utf-8'),
-                    value=json.dumps(payload).encode('utf-8')
-                )
+                pubsub_publisher.publish(pubsub_telemetry_topic, data=json.dumps(payload).encode('utf-8'), truck_id=tid)
+                _total_telemetry_published += 1
             except Exception:
                 pass
 
         results.append({"truck_id": tid, "status": status, "temp": cargo_temp, "door": door})
-
-    if kafka_producer:
-        try:
-            kafka_producer.flush(timeout=1.0)
-        except Exception:
-            pass
 
     injected_logs_history.append({
         "time": time_str,

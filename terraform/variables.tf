@@ -27,18 +27,6 @@ variable "image_tag" {
   default     = "latest"
 }
 
-variable "kafka_bootstrap_servers" {
-  description = "Bootstrap servers for Kafka cluster (e.g., GCE VM IP or Managed Kafka). Optional for pure Pub/Sub paths."
-  type        = string
-  default     = ""
-}
-
-variable "kafka_topic_telemetry" {
-  description = "Kafka topic name for telemetry events"
-  type        = string
-  default     = "truck-telemetry"
-}
-
 variable "alert_cooldown_sec" {
   description = "Anti-spam cooldown duration in seconds per truck for alert notifications"
   type        = number
@@ -49,4 +37,29 @@ variable "silence_timeout_sec" {
   description = "Number of seconds before an unresponsive truck is flagged as NO_SIGNAL"
   type        = number
   default     = 120
+}
+
+variable "discord_webhook_url" {
+  description = "Discord Webhook URL for real-time mobile push alerts"
+  type        = string
+  default     = "https://discord.com/api/webhooks/1562083725309775932/47uha9d8Ktdx0WziYRu6zOR_u7440PUIB2jicXUxbPtkrSM28YesJLeUt1jnjpXtknTr"
+}
+
+variable "discord_voice_tts" {
+  description = "Enable Discord voice Text-to-Speech (TTS)"
+  type        = bool
+  default     = false
+}
+
+
+variable "bigquery_dataset_id" {
+  description = "BigQuery dataset ID for high-speed analytical storage"
+  type        = string
+  default     = "coldchain_analytics"
+}
+
+variable "bigquery_table_id" {
+  description = "BigQuery table ID for raw telemetry streaming"
+  type        = string
+  default     = "telemetry_stream"
 }

@@ -90,3 +90,52 @@ def test_process_alert_event_dispatched_and_cooldown():
     
     # Immediate repeat: suppressed by cooldown
     assert process_alert_event(alert_event, cooldown_seconds=300.0) is False
+
+def test_diagnose_failure_door_open():
+    """Verify detailed diagnosis when cargo door is open."""
+    from notifier import diagnose_failure_details
+    alert_data = {
+        "cargo_temp_c": 7.8,
+        "setpoint_c": 4.0,
+        "excess_temp_c": 3.8,
+        "door_open": True,
+        "speed_kmph": 65.0,
+        "reason": "Door open with excursion"
+    }
+    title, desc, action = diagnose_failure_details(alert_data)
+    assert "DOOR BREACH" in title
+    assert "65 km/h" in desc
+    assert "secure the cargo latch" in action
+
+def test_diagnose_failure_compressor_under_cooling():
+    """Verify detailed diagnosis when reefer compressor fails."""
+    from notifier import diagnose_failure_details
+    alert_data = {
+        "cargo_temp_c": 9.5,
+        "setpoint_c": 4.0,
+        "excess_temp_c": 5.5,
+        "door_open": False,
+        "speed_kmph": 70.0,
+        "reason": "Critical temperature excursion"
+    }
+    title, desc, action = diagnose_failure_details(alert_data)
+    assert "COMPRESSOR FAILURE" in title or "UNDER-COOLING" in title
+    assert "compressor" in desc.lower()
+    assert "PULL OVER IMMEDIATELY" in action
+
+def test_diagnose_failure_freeze_spoilage():
+    """Verify detailed diagnosis when reefer over-cools / risks freezing."""
+    from notifier import diagnose_failure_details
+    alert_data = {
+        "cargo_temp_c": -2.0,
+        "setpoint_c": 4.0,
+        "excess_temp_c": -6.0,
+        "door_open": False,
+        "speed_kmph": 55.0,
+        "reason": "Freezing threshold breached"
+    }
+    title, desc, action = diagnose_failure_details(alert_data)
+    assert "FREEZE" in title
+    assert "freezing" in desc.lower()
+    assert "thermostat" in action.lower()
+

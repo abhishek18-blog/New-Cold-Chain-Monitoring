@@ -95,7 +95,7 @@ export default function App() {
           truck_ids: [
             'TRK-001', 'TRK-002', 'TRK-003', 'TRK-004', 'TRK-005',
             'TRK-006', 'TRK-007', 'TRK-008', 'TRK-009', 'TRK-010',
-            'TRK-011', 'TRK-012', 'TRK-013', 'TRK-014', 'TRK-015'
+            'TRK-011', 'TRK-012', 'TRK-013', 'TRK-014', 'TRK-015', 'TRK-016'
           ],
           scenario: scenarioKey
         })

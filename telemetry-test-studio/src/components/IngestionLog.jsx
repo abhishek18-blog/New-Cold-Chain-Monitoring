@@ -86,7 +86,7 @@ export default function IngestionLog({ logs = [], onClearLogs }) {
       {/* Log Session Footer */}
       <div className="bg-[#111810] px-3 py-1.5 border-t border-[#2A3324] flex items-center justify-between font-mono text-[10px] text-[#8A7A6A]">
         <span>{allLogs.length} RECENT ENTRIES · NO DROPPED EVENTS</span>
-        <span>SANDBOX-01 · KAFKA v3.8</span>
+        <span>SANDBOX-01 · CLOUD PUB/SUB</span>
       </div>
     </div>
   );

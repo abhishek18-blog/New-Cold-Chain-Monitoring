@@ -6,8 +6,9 @@ import FleetMap from './components/FleetMap';
 import TelemetryTable from './components/TelemetryTable';
 import IncidentFeed from './components/IncidentFeed';
 import PipelineHealth from './components/PipelineHealth';
-import KafkaThroughput from './components/KafkaThroughput';
+import StreamThroughput from './components/StreamThroughput';
 import Footer from './components/Footer';
+import { subscribeToTrucks } from './firestore';
 
 export default function App() {
   const [trucks, setTrucks] = useState([]);
@@ -28,8 +29,8 @@ export default function App() {
 
       if (trucksRes.status === 'fulfilled' && trucksRes.value.ok) {
         const data = await trucksRes.value.json();
-        if (data.trucks && Array.isArray(data.trucks)) {
-          setTrucks(data.trucks);
+        if (data.trucks && Array.isArray(data.trucks) && data.trucks.length > 0) {
+          setTrucks(prev => (prev.length === 0 ? data.trucks : prev));
         }
       }
 
@@ -59,16 +60,41 @@ export default function App() {
     }
   }, []);
 
+  // Connect native Firestore web SDK listener (onSnapshot) to trucks/ collection
+  // for serverless, true real-time map updates (Phase 2.3)
   useEffect(() => {
+    let unsubscribe = null;
+    try {
+      unsubscribe = subscribeToTrucks(
+        (liveTrucks) => {
+          setTrucks(liveTrucks);
+          const now = new Date();
+          const timeStr = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+          const dateStr = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+          setLastSync(`${timeStr} IST · ${dateStr} (Live Firestore onSnapshot)`);
+        },
+        (err) => {
+          console.warn('Firestore onSnapshot listener notice:', err);
+        }
+      );
+    } catch (err) {
+      console.warn('Could not initialize direct onSnapshot listener:', err);
+    }
+
+    // Baseline fetch for metrics, incidents, health
     fetchData();
-    const interval = setInterval(fetchData, 1200);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchData, 2500);
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+      clearInterval(interval);
+    };
   }, [fetchData]);
 
   // Compute counts
   const counts = {
-    total: trucks.length || 15,
-    ok: trucks.filter(t => t.status === 'OK').length || (trucks.length === 0 ? 10 : 0),
+    total: trucks.length || 16,
+    ok: trucks.filter(t => t.status === 'OK').length || (trucks.length === 0 ? 11 : 0),
     warning: trucks.filter(t => t.status === 'WARNING').length || (trucks.length === 0 ? 2 : 0),
     alert: trucks.filter(t => t.status === 'ALERT').length || (trucks.length === 0 ? 2 : 0),
     noSignal: trucks.filter(t => t.status === 'NO_SIGNAL').length || (trucks.length === 0 ? 1 : 0),
@@ -79,7 +105,7 @@ export default function App() {
       <Header
         liveCount={counts.total}
         lastSync={lastSync}
-        kafkaConnected={health?.kafka_connected !== false}
+        streamConnected={health?.pubsub_connected !== false}
       />
 
       <main className="flex-1 max-w-[1720px] w-full mx-auto px-4 lg:px-8 py-5 space-y-5">
@@ -109,7 +135,7 @@ export default function App() {
           <div className="lg:col-span-4 space-y-5">
             <IncidentFeed alerts={alerts} />
             <PipelineHealth health={health} />
-            <KafkaThroughput metrics={metrics} />
+            <StreamThroughput metrics={metrics} />
           </div>
         </div>
       </main>

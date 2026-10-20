@@ -1,182 +1,155 @@
-# ☁️ ColdChain Fleet - Google Cloud Run Terraform Deployment
+# ☁️ ColdChain Fleet - Google Cloud High-Speed Streaming & Microservices
 
-This directory contains production-grade Terraform configurations to deploy the entire **ColdChain Fleet** streaming and monitoring platform to **Google Cloud Platform (GCP)** using **Cloud Run**, **Cloud Pub/Sub**, **Cloud Firestore (Native)**, **Cloud Storage (GCS)**, and **Cloud Scheduler**.
-
----
-
-## 🏛️ Architecture Overview on GCP
-
-```
-[IoT Trucks / Telemetry Ingestion]
-        │
-        ▼
- ┌────────────────────────────────────────────────────────┐
- │ ☁️ Google Cloud Pub/Sub                                │
- │   • telemetry-topic  ──► telemetry-sub (with DLQ)      │
- │   • alerts-topic     ──► alerts-sub                    │
- │   • telemetry-dlq-topic                                │
- └──────────────────────┬─────────────────────────────────┘
-                        │
-         ┌──────────────┴──────────────┐
-         ▼                             ▼
-┌───────────────────────────┐ ┌───────────────────────────┐
-│ 🚀 Cloud Run (Worker)     │ │ 🚀 Cloud Run (Worker)     │
-│   coldchain-processor     │ │   coldchain-alert-notifier│
-│   (Continuous CPU,        │ │   (Driver SMS, in-cab     │
-│    streaming pull)        │ │    buzzer downlink)       │
-└────────────┬──────────────┘ └───────────────────────────┘
-             │
-             ▼
-┌───────────────────────────┐ ◄─── ⏰ Cloud Scheduler (every 1 min)
-│ 🔥 Cloud Firestore        │       │
-│   • live_status           │       ▼
-│   • alerts                │     ┌───────────────────────────┐
-└────────────┬──────────────┘     │ ⏱️ Cloud Run Job          │
-             │                    │   coldchain-silence-      │
-             ▼                    │   detector (flags dead)   │
-┌───────────────────────────┐     └───────────────────────────┘
-│ 🖥️ Cloud Run (Public API)  │
-│   coldchain-dashboard-api │ ────► Public HTTPS Web UI & API
-└───────────────────────────┘
-
-┌───────────────────────────┐
-│ 💾 Google Cloud Storage   │
-│   ${project}-coldchain-   │ ◄─── Cold telemetry data lake
-│   archive-prod            │     (Nearline: 30d, Coldline: 90d)
-└───────────────────────────┘
-```
+This directory contains Terraform scripts and an automated deployment pipeline to host the **ColdChain Fleet Platform** on **Google Cloud Platform (GCP)**. It is architected for **high-speed telemetry ingestion**, **multi-tier storage (BigQuery + Cloud Storage + Firestore)**, and **5 decoupled microservices on Google Cloud Run**.
 
 ---
 
-## 📦 Provisioned GCP Resources
+## 🏛️ End-to-End High-Speed Cloud Architecture
 
-| GCP Service | Resource Name / ID | Purpose |
+```
+[IoT Telemetry / Mobile Fleet / Generator]
+                 │
+                 ▼ (High-Velocity JSON Streaming)
+┌─────────────────────────────────────────────────────────────────┐
+│ ⚡ GOOGLE CLOUD PUB/SUB INGESTION ENGINE (High-Throughput)      │
+│   • telemetry-topic  ──► Direct BigQuery Streaming Pipe         │
+│   • telemetry-topic  ──► telemetry-sub (Processor Worker)       │
+│   • alerts-topic     ──► alerts-sub (Alert Notification Worker) │
+│   • telemetry-dlq-topic (Dead Letter Quarantine)                │
+└────────┬──────────────────────┬─────────────────────────────────┘
+         │                      │
+         │ Direct Streaming     │ Streaming Pull
+         ▼                      ▼
+┌─────────────────────────┐  ┌───────────────────────────────────┐
+│ 📊 GOOGLE BIGQUERY      │  │ 🚀 Microservice: Processor         │
+│   coldchain_analytics   │  │   (Cloud Run - Auto-scale 1-10)   │
+│   .telemetry_stream     │  │   • Schema Validation             │
+│   • Day-Partitioned (ts)│  │   • Excursion & Door Anomaly      │
+│   • Clustered by Truck  │  │   • Out-of-order Timestamp Guard  │
+└─────────────────────────┘  └──────────────┬────────────────────┘
+                                            │
+                     ┌──────────────────────┴──────────────────────┐
+                     ▼                                             ▼
+┌────────────────────────────────────────┐ ┌────────────────────────────────────────┐
+│ 🔥 GOOGLE CLOUD FIRESTORE              │ │ 📢 Microservice: Alert Notifier        │
+│   • live_status (Real-time fleet state)│ │   (Cloud Run - Auto-scale 1-3)         │
+│   • alerts (Immutable compliance audit)│ │   • Discord Webhook Push Notification  │
+└────────────────────┬───────────────────┘ │   • Fleet Ops Incident Channel         │
+                     │                     │   • In-Cab Buzzer Telematics Downlink  │
+                     ▼                     └────────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│ 🌐 Microservice: Operations Dashboard  │
+│   coldchain-dashboard-api              │ ◄─── Public HTTPS Web UI & REST API
+│   (Cloud Run - Auto-scale 1-5)         │      Live Map, Analytics & Simulator
+└────────────────────────────────────────┘
+
+┌────────────────────────────────────────┐ ┌────────────────────────────────────────┐
+│ 💾 Microservice: Silence Detector      │ │ 🚚 Microservice: Telemetry Generator   │
+│   (Cloud Run Job + Cloud Scheduler)    │ │   (Cloud Run Job - On-Demand Testing)  │
+│   Runs every 1 min, flags dead trucks  │ │   High-Speed Live Fleet Simulator      │
+└────────────────────────────────────────┘ └────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 🗄️ GOOGLE CLOUD STORAGE DATA LAKE (Cold Archive)                │
+│   ${project}-coldchain-archive-prod (Lifecycle: Nearline ->     │
+│   Coldline 90d -> Archive 365d)                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📦 Provisioned GCP Microservices & Storage Layers
+
+| Layer | Service / Resource | Purpose |
 | :--- | :--- | :--- |
-| **Artifact Registry** | `coldchain-containers` | Private Docker registry storing microservice container images |
-| **Cloud Run Service** | `coldchain-dashboard-api` | Public HTTPS Web Dashboard and FastAPI REST service (port 8000) |
-| **Cloud Run Service** | `coldchain-processor` | Background stream processing worker with always-on CPU allocation |
-| **Cloud Run Service** | `coldchain-alert-notifier` | Background worker consuming incident alerts & dispatching notifications |
-| **Cloud Run Job** | `coldchain-silence-detector` | One-shot job auditing unresponsive trucks (>120s silent) |
-| **Cloud Scheduler** | `coldchain-silence-detector-trigger` | Cron job triggering silence detection once per minute (`* * * * *`) |
-| **Cloud Firestore** | `(default)` | Native mode document DB storing `live_status` and `alerts` |
-| **Cloud Pub/Sub** | `telemetry-topic` & `telemetry-sub` | Primary streaming telemetry ingestion with 5-retry dead-letter policy |
-| **Cloud Pub/Sub** | `alerts-topic` & `alerts-sub` | Incident and excursion alert event stream |
-| **Cloud Pub/Sub** | `telemetry-dlq-topic` | Dead Letter Queue for poison-pill payloads |
-| **Cloud Storage** | `${project}-coldchain-archive-${env}` | GCS bucket with Nearline (30d) and Coldline (90d) retention lifecycle |
-| **IAM Service Account** | `coldchain-cloudrun-sa` | Least-privilege execution identity for Cloud Run services and jobs |
+| **Microservice 1** | `coldchain-dashboard-api` (Cloud Run) | Public HTTPS Operations Dashboard + FastAPI REST backend |
+| **Microservice 2** | `coldchain-processor` (Cloud Run) | High-throughput stream processor pulling from Pub/Sub |
+| **Microservice 3** | `coldchain-alert-notifier` (Cloud Run) | Real-time Discord app push alerts with root cause failure diagnosis |
+| **Microservice 4** | `coldchain-silence-detector` (Cloud Run Job) | Scheduled auditor flagging unresponsive trucks (>120s silent) |
+| **Microservice 5** | `coldchain-telemetry-generator` (Cloud Run Job)| High-speed fleet telemetry generator for live simulations on GCP |
+| **High-Speed Ingestion**| `telemetry-bigquery-sub` (Pub/Sub) | **Direct zero-code streaming** into BigQuery at unlimited scale |
+| **Analytics Storage** | `coldchain_analytics.telemetry_stream` | Day-partitioned, clustered BigQuery table for sub-second SQL queries |
+| **Real-time State** | Cloud Firestore Native `(default)` | Sub-millisecond reads/writes for live fleet coordinates |
+| **Cold Data Lake** | Cloud Storage Bucket | Multi-tier storage (Standard -> Nearline 30d -> Coldline 90d -> Archive 365d) |
 
 ---
 
-## 🛠️ Prerequisites
+## ⚡ Deployment: Commands for Google Cloud CLI / Cloud Shell
 
-1. **Google Cloud SDK (`gcloud`)** installed and authenticated:
-   ```bash
-   gcloud auth login
-   gcloud auth application-default login
-   ```
-2. **Terraform >= 1.5.0** installed:
-   ```bash
-   terraform version
-   ```
-3. **Docker** installed and running on your local machine.
-4. Active Google Cloud Project with billing enabled.
+You can deploy the entire infrastructure with **a single command** directly from Google Cloud Shell or any terminal authenticated with `gcloud`.
+
+### Step 1: Open Google Cloud Shell & Clone
+```bash
+git clone https://github.com/abhishek18-blog/New-Cold-Chain-Monitoring.git
+cd New-Cold-Chain-Monitoring
+```
+
+### Step 2: Set Your GCP Project & Authenticate
+```bash
+gcloud config set project <YOUR_PROJECT_ID>
+```
+
+### Step 3: Run the Automated Deployer
+```bash
+./terraform/deploy.sh
+```
+*(Optionally specify a custom region: `./terraform/deploy.sh <YOUR_PROJECT_ID> asia-south1`)*
+
+The script automatically:
+1. Enables all 10 required GCP APIs.
+2. Creates the Artifact Registry Docker repository.
+3. Builds and pushes all 5 microservices using Google Cloud Build.
+4. Provisions BigQuery, Cloud Storage, Firestore, Pub/Sub, and Cloud Run services via Terraform.
+5. Prints your **Public Live Dashboard URL** and BigQuery table path.
 
 ---
 
-## 🚀 Quick Deployment (One-Command)
+## 🎮 Post-Deployment: Useful `gcloud` CLI Commands
 
-Run the included automated deployment script with your GCP Project ID:
-
+### 1. Launch Live High-Speed Fleet Simulation in Google Cloud
+Run the telemetry generator microservice directly on Cloud Run:
 ```bash
-chmod +x terraform/deploy.sh
-./terraform/deploy.sh <YOUR_GCP_PROJECT_ID> [REGION]
+gcloud run jobs execute coldchain-telemetry-generator --region=asia-south1
 ```
 
-*Example:*
+### 2. Stream Live Logs from Microservices
+* **Stream Processor Logs:**
+  ```bash
+  gcloud run services logs read coldchain-processor --region=asia-south1 --tail=50
+  ```
+* **Alert Notifier & Discord Dispatch Logs:**
+  ```bash
+  gcloud run services logs read coldchain-alert-notifier --region=asia-south1 --tail=50
+  ```
+* **Dashboard API Logs:**
+  ```bash
+  gcloud run services logs read coldchain-dashboard-api --region=asia-south1 --tail=50
+  ```
+
+### 3. Query Real-Time High-Speed Telemetry in BigQuery (Native JSON)
+Run a sub-second SQL query directly on the raw JSON documents from the Cloud CLI:
 ```bash
-./terraform/deploy.sh my-gcp-project-123 asia-south1
+bq query --use_legacy_sql=false \
+'SELECT 
+   STRING(data.truck_id) AS truck, 
+   FLOAT64(data.cargo_temp_c) AS temp_c, 
+   FLOAT64(data.setpoint_c) AS setpoint, 
+   BOOL(data.door_open) AS door_open, 
+   publish_time
+ FROM `coldchain_analytics.telemetry_stream` 
+ ORDER BY publish_time DESC 
+ LIMIT 10'
 ```
 
-This script will:
-1. Enable required GCP service APIs (`run`, `pubsub`, `firestore`, `storage`, `cloudscheduler`, `artifactregistry`).
-2. Create the Artifact Registry repository.
-3. Configure Docker authentication.
-4. Build and push images for `dashboard-api`, `processor`, `alert-notifier`, and `silence-detector`.
-5. Run `terraform init` and `terraform apply`.
-6. Output the live public dashboard URL.
-
----
-
-## 📝 Manual Deployment Steps
-
-If you prefer step-by-step control:
-
-### 1. Build and Push Container Images
-
+### 4. Manually Trigger Silence Detection Audit
 ```bash
-PROJECT_ID="your-gcp-project-id"
-REGION="asia-south1"
-REPO="coldchain-containers"
-REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
-
-# Configure Docker authentication
-gcloud auth configure-docker "${REGION}-docker.pkg.dev"
-
-# Build & Push
-docker build -t "${REGISTRY}/dashboard-api:latest" ./dashboard
-docker push "${REGISTRY}/dashboard-api:latest"
-
-docker build -t "${REGISTRY}/processor:latest" ./processor
-docker push "${REGISTRY}/processor:latest"
-
-docker build -t "${REGISTRY}/alert-notifier:latest" ./alert-notifier
-docker push "${REGISTRY}/alert-notifier:latest"
-
-docker build -t "${REGISTRY}/silence-detector:latest" ./silence-detector
-docker push "${REGISTRY}/silence-detector:latest"
+gcloud run jobs execute coldchain-silence-detector --region=asia-south1
 ```
 
-### 2. Configure Terraform Variables
-
-Create a `terraform.tfvars` file:
-
+### 5. Tear Down / Destroy All Cloud Resources
+When you want to stop all billing and remove all resources:
 ```bash
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-```
-
-Edit `terraform/terraform.tfvars`:
-```hcl
-project_id                  = "your-gcp-project-id"
-region                      = "asia-south1"
-environment                 = "prod"
-artifact_registry_repo_name = "coldchain-containers"
-image_tag                   = "latest"
-```
-
-### 3. Deploy Infrastructure
-
-```bash
-cd terraform
-terraform init
-terraform plan
-terraform apply
-```
-
-### 4. Inspect Outputs
-
-```bash
-terraform output dashboard_url
-```
-
-Open the printed URL in your browser to interact with the live operations dashboard and map.
-
----
-
-## 🧹 Teardown / Destroy
-
-To destroy all deployed GCP resources and prevent recurring costs:
-
-```bash
-cd terraform
-terraform destroy
+make tf-destroy
+# OR
+cd terraform && terraform destroy -auto-approve
 ```

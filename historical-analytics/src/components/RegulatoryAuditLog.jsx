@@ -3,6 +3,27 @@ import { CalendarDays, ListFilter, Search } from 'lucide-react';
 
 const AUDIT_RECORDS = [
   {
+    id: 'CC-261017-043',
+    severity: 'WARNING',
+    date: '17 Oct 2026',
+    time: '16:30:15 IST',
+    truck: 'TRK-016',
+    route: 'Pune → Mumbai',
+    cargo: 'Vaccines & Pharma',
+    setpoint: 'SP 4.0°C',
+    peakTemp: '6.5°C',
+    delta: 'Δ +2.5°C',
+    duration: '3.2 min',
+    ongoing: false,
+    cause: 'Expressway Incline Compressor Strain',
+    driver: 'Abhishek Deshmukh',
+    smsDelivered: 'Discord Push Alert delivered to 9022290311',
+    acknowledged: 'Driver acknowledged via in-cab telematics',
+    note: 'Khandala ghat clearance; auxiliary cooling active.',
+    status: 'RESOLVED · 16:35:15 IST',
+    statusColor: 'text-[#34D399]'
+  },
+  {
     id: 'CC-261017-042',
     severity: 'CRITICAL',
     date: '17 Oct 2026',

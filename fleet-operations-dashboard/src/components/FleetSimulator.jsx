@@ -17,12 +17,13 @@ const ALL_TRUCKS = [
   { id: 'TRK-013', type: 'Chilled', route: 'Guwahati → Shillong', sp: -18.0 },
   { id: 'TRK-014', type: 'Frozen', route: 'Bhopal → Jabalpur', sp: 4.0 },
   { id: 'TRK-015', type: 'Frozen', route: 'Mangaluru → Udupi', sp: -22.0 },
+  { id: 'TRK-016', type: 'Pharma', route: 'Pune → Mumbai', sp: 4.0 },
 ];
 
 export default function FleetSimulator({ onSimulateComplete }) {
   const [selectedTrucks, setSelectedTrucks] = useState(ALL_TRUCKS.map(t => t.id));
   const [feedback, setFeedback] = useState({
-    message: 'Ready for injection. No mass scenario running · 15 targets armed · Notifications appear here after execution.',
+    message: 'Ready for injection. No mass scenario running · 16 targets armed · Notifications appear here after execution.',
     type: 'idle'
   });
   const [executing, setExecuting] = useState(false);
@@ -49,7 +50,7 @@ export default function FleetSimulator({ onSimulateComplete }) {
 
     setExecuting(true);
     setFeedback({
-      message: `Executing [${label}] across ${selectedTrucks.length} targets into Kafka cluster...`,
+      message: `Executing [${label}] across ${selectedTrucks.length} targets into Cloud Pub/Sub stream...`,
       type: 'pending'
     });
 
@@ -102,7 +103,7 @@ export default function FleetSimulator({ onSimulateComplete }) {
         </div>
 
         <div className="text-xs font-mono font-medium text-[#F6D18A] bg-[#241A14] px-3 py-1 rounded border border-[#3A2B20] self-start sm:self-auto">
-          {selectedTrucks.length} / 15 Selected
+          {selectedTrucks.length} / 16 Selected
         </div>
       </div>
 

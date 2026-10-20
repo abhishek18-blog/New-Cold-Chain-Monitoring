@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ColdChain Fleet: High-Speed Kafka Telemetry Blaster
-Streams high-velocity telemetry (up to 1,000+ msgs/sec) directly into Kafka to stress-test the cluster and drive live moving truck positions.
+ColdChain Fleet: High-Speed Cloud Pub/Sub Telemetry Blaster
+Streams high-velocity telemetry (up to 1,000+ msgs/sec) directly into Google Cloud Pub/Sub.
 
 Usage:
   python3 scripts/blast_telemetry.py --rate 1000 --duration 10
@@ -16,13 +16,17 @@ import random
 import argparse
 import logging
 from datetime import datetime, timezone
-from confluent_kafka import Producer
+
+try:
+    from google.cloud import pubsub_v1
+except ImportError:
+    pubsub_v1 = None
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
-logger = logging.getLogger("kafka-blaster")
+logger = logging.getLogger("pubsub-blaster")
 
 TRUCK_ROUTES = {
     "TRK-001": {"sp": 4.0, "route": "Goa → Mumbai", "waypoints": [(15.4909, 73.8278), (15.8647, 73.8234), (16.1558, 73.7124), (16.9902, 73.3120), (17.5450, 73.4867), (18.2324, 73.4456), (18.7521, 73.1022), (19.0760, 72.8777)]},
@@ -48,62 +52,49 @@ def interpolate(waypoints, progress):
     if n <= 0: return waypoints[0]
     scaled = (progress % 1.0) * n
     idx = min(int(scaled), n - 1)
-    t = scaled - idx
-    lat0, lon0 = waypoints[idx]
-    lat1, lon1 = waypoints[idx + 1]
-    return (lat0 + (lat1 - lat0) * t, lon0 + (lon1 - lon0) * t)
+    seg_fraction = scaled - idx
+    p1 = waypoints[idx]
+    p2 = waypoints[idx + 1]
+    lat = p1[0] + seg_fraction * (p2[0] - p1[0])
+    lon = p1[1] + seg_fraction * (p2[1] - p1[1])
+    return lat, lon
 
 def main():
-    parser = argparse.ArgumentParser(description="High-Speed Kafka Telemetry Blaster (1000 msg/sec)")
-    parser.add_argument("--rate", type=int, default=1000, help="Messages per second target (default: 1000)")
-    parser.add_argument("--duration", type=int, default=0, help="Run duration in seconds (0 = continuous)")
-    parser.add_argument("--topic", default="truck-telemetry", help="Kafka topic (default: truck-telemetry)")
-    parser.add_argument("--bootstrap", default=None, help="Kafka bootstrap servers")
+    parser = argparse.ArgumentParser(description="Blast synthetic cold-chain telemetry into Pub/Sub at high throughput")
+    parser.add_argument("--rate", type=int, default=1000, help="Target messages/second (default: 1000)")
+    parser.add_argument("--duration", type=int, default=0, help="Duration in seconds (0 = continuous)")
+    parser.add_argument("--project", default=None, help="GCP project ID")
+    parser.add_argument("--topic", default="telemetry-topic", help="Pub/Sub topic name")
+    parser.add_argument("--dry-run", action="store_true", help="Run throughput benchmark locally in dry-run mode")
     args = parser.parse_args()
 
-    bootstrap = args.bootstrap or os.environ.get("KAFKA_BOOTSTRAP_SERVERS")
-    if not bootstrap:
-        if os.path.exists("/.dockerenv"):
-            bootstrap = "kafka-1:19092,kafka-2:19094"
-        else:
-            bootstrap = "localhost:9092,localhost:9094"
+    project_id = args.project or os.environ.get("GCP_PROJECT_ID", "coldchain-local")
+    if args.dry_run or pubsub_v1 is None:
+        class MockPublisher:
+            def publish(self, topic, data=b"", **attrs):
+                pass
+            def topic_path(self, proj, top):
+                return f"projects/{proj}/topics/{top} [local benchmark]"
+        publisher = MockPublisher()
+        topic_path = publisher.topic_path(project_id, args.topic)
+        logger.info("⚡ BENCHMARK MODE: Profiling telemetry generator throughput to %s", topic_path)
+    else:
+        publisher = pubsub_v1.PublisherClient()
+        topic_path = publisher.topic_path(project_id, args.topic)
 
-    logger.info("=" * 64)
-    logger.info("   ⚡ ColdChain Fleet: High-Speed Kafka Telemetry Blaster ⚡   ")
-    logger.info("=" * 64)
-    logger.info("Target Rate:    %d messages/sec", args.rate)
-    logger.info("Kafka Brokers:  %s", bootstrap)
-    logger.info("Kafka Topic:    %s", args.topic)
-    logger.info("=" * 64)
+    logger.info("Initializing Pub/Sub Blaster -> Project: %s, Topic: %s", project_id, topic_path)
+    logger.info("Target Rate: %d msg/s | Duration: %s", args.rate, f"{args.duration}s" if args.duration > 0 else "Continuous (Ctrl+C to stop)")
 
-    producer = None
-    try:
-        producer = Producer({
-            'bootstrap.servers': bootstrap,
-            'client.id': 'high-speed-telemetry-blaster',
-            'acks': 1,
-            'queue.buffering.max.messages': 500000,
-            'queue.buffering.max.kbytes': 204800,
-            'linger.ms': 5,
-            'compression.type': 'lz4'
-        })
-        logger.info("Connected to Kafka cluster.")
-    except Exception as e:
-        logger.error("Failed to connect to Kafka: %s", e)
-        sys.exit(1)
+    truck_ids = list(TRUCK_ROUTES.keys())
+    progress_map = {tid: (i * 0.065) % 1.0 for i, tid in enumerate(truck_ids)}
 
-    truck_keys = list(TRUCK_ROUTES.keys())
-    progress_map = {tid: random.uniform(0.1, 0.9) for tid in truck_keys}
+    batch_size = max(10, args.rate // 40)
+    sleep_interval = 1.0 / (args.rate / batch_size)
 
     total_sent = 0
     start_time = time.time()
-    last_report = time.time()
+    last_report = start_time
     sent_in_window = 0
-
-    batch_size = max(10, args.rate // 50) # e.g. 20 msgs per batch
-    sleep_interval = 1.0 / (args.rate / batch_size) # sleep interval between batches
-
-    logger.info("🚀 Commencing blast at %d msg/sec across 15 trucks...", args.rate)
 
     try:
         while True:
@@ -114,15 +105,13 @@ def main():
             now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
             for _ in range(batch_size):
-                tid = random.choice(truck_keys)
+                tid = random.choice(truck_ids)
                 prof = TRUCK_ROUTES[tid]
                 sp = prof["sp"]
 
-                # Advance progress along highway
                 progress_map[tid] = (progress_map[tid] + 0.0008) % 1.0
                 lat, lon = interpolate(prof["waypoints"], progress_map[tid])
 
-                # Small thermal fluctuations
                 cargo_temp = round(sp + random.uniform(-0.4, 0.8), 2)
                 speed = round(random.uniform(55.0, 75.0), 1)
                 fuel = round(random.uniform(65.0, 95.0), 1)
@@ -139,24 +128,15 @@ def main():
                     "door_open": False
                 }
 
-                json_bytes = json.dumps(payload).encode('utf-8')
-                producer.produce(
-                    topic=args.topic,
-                    key=tid.encode('utf-8'),
-                    value=json_bytes
-                )
+                publisher.publish(topic_path, data=json.dumps(payload).encode('utf-8'), truck_id=tid)
                 sent_in_window += 1
                 total_sent += 1
 
-            producer.poll(0)
-
-            # Sleep to match rate
             elapsed = time.time() - t0
             to_sleep = max(0.0, sleep_interval - elapsed)
             if to_sleep > 0:
                 time.sleep(to_sleep)
 
-            # Periodic throughput reporting
             now = time.time()
             if now - last_report >= 1.0:
                 dt = now - last_report
@@ -168,10 +148,8 @@ def main():
     except KeyboardInterrupt:
         logger.info("Interrupted by user.")
     finally:
-        logger.info("Flushing producer buffer...")
-        producer.flush(timeout=5.0)
         total_time = max(0.1, time.time() - start_time)
-        logger.info("Blast finished: %d messages produced in %.1fs (avg %.1f msg/s)",
+        logger.info("Blast finished: %d messages published to Pub/Sub in %.1fs (avg %.1f msg/s)",
                     total_sent, total_time, total_sent / total_time)
 
 if __name__ == "__main__":

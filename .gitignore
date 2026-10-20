@@ -1,9 +1,26 @@
-# Environment & Secrets
+# ==============================================================================
+# ColdChain Fleet - .gitignore
+# Clean configuration for GitHub & Google Cloud Platform
+# ==============================================================================
+
+# Environment & Local Secrets
 .env
 *.env.local
+*.env.*.local
 
-# Python Bytecode & Virtual Environments
+# Node.js, Frontend Builds & Dependencies
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Python Bytecode, Caches & Virtual Environments
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -11,27 +28,45 @@ __pycache__/
 env/
 venv/
 .venv/
+ENV/
 
-# Testing & Pytest
+# Testing & Coverage
 .pytest_cache/
+**/.pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+.hypothesis/
 
-# Local Data Archives & Runtime Storage
+# Local Runtime Data, Archives & Temporary Storage
+data/
 data/archive/
 /archive/
+*.log
+*.gz
 
-# IDE & Editor files
+# Terraform Local State & Plugins
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# IDE, OS & Agent Scratch Files
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
 .antigravityMem/
 .recall_scratchpad.md
-
-# Node / Frontend
-node_modules/
-dist/
-

@@ -47,12 +47,12 @@ export default function Header({ isStreaming = false, streamMps = 0 }) {
               }`}></span>
             </span>
             <span className="text-[11px] font-semibold tracking-wide font-mono">
-              {isStreaming ? `⚡ BLASTING ${streamMps ? streamMps.toFixed(0) : '1,000'} MSG/S · KAFKA STRESS` : 'PIPELINE READY'}
+              {isStreaming ? `⚡ BLASTING ${streamMps ? streamMps.toFixed(0) : '1,000'} MSG/S · PUBSUB STREAM` : 'PIPELINE READY'}
             </span>
           </div>
 
           <span className="text-[#8B8882] text-[11px] hidden sm:inline font-mono">
-            Kafka Cluster Connected
+            Cloud Pub/Sub Connected
           </span>
 
           <div className="w-7 h-7 rounded-full bg-[#151A14] border border-[#2A3324] flex items-center justify-center text-[#F6D18A] text-xs font-semibold">

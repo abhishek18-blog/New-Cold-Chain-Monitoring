@@ -1,7 +1,7 @@
 import React from 'react';
 import { LayoutDashboard, FlaskConical, BarChart3, Radio } from 'lucide-react';
 
-export default function Header({ liveCount = 15, lastSync, kafkaConnected = true }) {
+export default function Header({ liveCount = 16, lastSync, streamConnected = true }) {
   const syncTime = lastSync || (
     new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) +
     ' IST · ' +

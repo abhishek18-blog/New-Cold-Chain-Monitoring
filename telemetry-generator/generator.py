@@ -6,7 +6,7 @@ import random
 import logging
 import math
 from datetime import datetime, timezone
-from confluent_kafka import Producer
+from google.cloud import pubsub_v1
 from models import TruckTelemetry
 
 logging.basicConfig(
@@ -24,10 +24,6 @@ def handle_shutdown(signum, frame):
 
 signal.signal(signal.SIGTERM, handle_shutdown)
 signal.signal(signal.SIGINT, handle_shutdown)
-
-def delivery_report(err, msg):
-    if err is not None:
-        logger.error("Message delivery failed: %s", err)
 
 # Dense highway route waypoints across India — 15 trucks, diverse cargo & routes
 TRUCK_HIGHWAY_ROUTES = {
@@ -239,6 +235,18 @@ TRUCK_HIGHWAY_ROUTES = {
             (15.4909, 73.8278)  # Panaji, Goa
         ]
     },
+    "TRK-016": {
+        "route": "Pune → Mumbai (Expressway) | Chilled 4°C | Vaccines & Pharma",
+        "setpoint_c": 4.0,
+        "fuel_pct": 88.0,
+        "excursion_prob_override": 0.015,
+        "waypoints": [
+            (18.5204, 73.8567), # Pune
+            (18.7521, 73.4022), # Lonavala
+            (18.9890, 73.1120), # Panvel
+            (19.0760, 72.8777)  # Mumbai
+        ]
+    }
 }
 
 def interpolate_along_route(waypoints, progress):
@@ -262,31 +270,23 @@ def interpolate_along_route(waypoints, progress):
     return lat, lon
 
 def main():
-    bootstrap_servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka-1:19092,kafka-2:19094")
-    topic = os.environ.get("KAFKA_TOPIC_TELEMETRY", "truck-telemetry")
-    ping_interval = float(os.environ.get("PING_INTERVAL_SEC", "5.0"))
+    project_id = os.environ.get("GCP_PROJECT_ID", "coldchain-local")
+    topic_id = os.environ.get("PUBSUB_TOPIC", "telemetry-topic")
+    ping_interval = float(os.environ.get("PING_INTERVAL_SEC", "1.0"))  # Realistic 1-second interval (protects Firestore 1-write/sec limit)
     excursion_prob = float(os.environ.get("EXCURSION_PROBABILITY", "0.015"))
     stress_mode = os.environ.get("STRESS_MODE", "false").lower() in ("true", "1", "yes")
+    simulate_dropout = os.environ.get("SIMULATE_DROPOUT", "false").lower() in ("true", "1", "yes")
 
     if stress_mode:
         ping_interval = float(os.environ.get("STRESS_INTERVAL_SEC", "0.1"))
-        logger.info("⚡ STRESS_MODE active! High-speed telemetry: %.2fs interval (~%d msgs/sec across %d trucks)",
-                    ping_interval, int(len(TRUCK_HIGHWAY_ROUTES) / max(0.001, ping_interval)), len(TRUCK_HIGHWAY_ROUTES))
+        logger.info("⚡ STRESS_MODE active! High-speed telemetry: %.2fs interval across %d trucks",
+                    ping_interval, len(TRUCK_HIGHWAY_ROUTES))
     else:
-        logger.info("Starting telemetry generator. Bootstrap: %s, Topic: %s, Interval: %ss",
-                    bootstrap_servers, topic, ping_interval)
+        logger.info("Starting telemetry generator. Project: %s, Topic: %s, Normal Cadence: %.1fs",
+                    project_id, topic_id, ping_interval)
 
-    conf = {
-        'bootstrap.servers': bootstrap_servers,
-        'client.id': 'telemetry-generator-client',
-        'acks': 'all',
-        'enable.idempotence': True,
-        'retries': 10,
-        'retry.backoff.ms': 500,
-        'queue.buffering.max.messages': 100000
-    }
-
-    producer = Producer(conf)
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(project_id, topic_id)
 
     # Initialize states with staggered progress along their routes
     states = {}
@@ -298,14 +298,29 @@ def main():
             "fuel_pct": prof["fuel_pct"],
             "speed_kmph": random.uniform(55.0, 75.0),
             "door_open": False,
-            "excursion_ticks_remaining": 0
+            "excursion_ticks_remaining": 0,
+            "is_offline": False
         }
         stagger = (stagger + 0.18) % 1.0
 
+    # In-memory buffer for local caching during network dropouts
+    _offline_buffer = []
+    cycle_counter = 0
+
     while running:
         loop_start = time.time()
-        # Scale progress increment so physical speed (~65 km/h) remains consistent at high sampling rates
+        cycle_counter += 1
+        has_critical_anomaly = False
+
+        # Scale progress increment so physical speed (~65 km/h) remains consistent
         progress_step = 0.003 * (ping_interval / 5.0) if ping_interval < 5.0 else 0.003
+
+        # Simulate periodic network dropout (e.g. mountain pass tunnel every 60 cycles for 5 cycles) if enabled
+        network_dropped = False
+        if simulate_dropout:
+            network_dropped = (cycle_counter % 60) < 5
+            if network_dropped:
+                logger.warning("📶 [NETWORK DROPOUT ACTIVE] Simulating tunnel / cell tower outage. Caching to local buffer...")
 
         for truck_id, prof in TRUCK_HIGHWAY_ROUTES.items():
             st = states[truck_id]
@@ -329,7 +344,8 @@ def main():
                 if random.random() < truck_excursion_prob:
                     st["excursion_ticks_remaining"] = random.randint(15, 30)
                     st["door_open"] = random.random() < 0.6
-                    logger.info("Injecting excursion for %s (%d ticks remaining, door_open=%s)",
+                    has_critical_anomaly = True
+                    logger.info("🚨 Injecting excursion for %s (%d ticks remaining, door_open=%s) [BURST MODE]",
                                 truck_id, st["excursion_ticks_remaining"], st["door_open"])
                 else:
                     st["door_open"] = False
@@ -337,6 +353,7 @@ def main():
             if st["excursion_ticks_remaining"] > 0:
                 st["excursion_ticks_remaining"] -= 1
                 st["cargo_temp_c"] += random.uniform(0.18, 0.35)
+                has_critical_anomaly = True
             else:
                 st["door_open"] = False
                 setpoint = prof["setpoint_c"]
@@ -363,30 +380,48 @@ def main():
 
             payload_json = telemetry.model_dump_json()
 
-            try:
-                producer.produce(
-                    topic=topic,
-                    key=truck_id.encode('utf-8'),
-                    value=payload_json.encode('utf-8'),
-                    callback=delivery_report
-                )
-            except BufferError:
-                producer.poll(1.0)
-                producer.produce(
-                    topic=topic,
-                    key=truck_id.encode('utf-8'),
-                    value=payload_json.encode('utf-8'),
-                    callback=delivery_report
-                )
+            if network_dropped:
+                # Network dropout: cache to in-memory local buffer
+                _offline_buffer.append((truck_id, payload_json))
+            else:
+                # If network was restored and buffer has backlog, flush it with is_backlog="true"
+                if _offline_buffer:
+                    logger.info("🔄 Network restored! Flushing %d cached backlog messages to Pub/Sub with is_backlog: true...", len(_offline_buffer))
+                    while _offline_buffer:
+                        b_truck_id, b_payload = _offline_buffer.pop(0)
+                        try:
+                            publisher.publish(
+                                topic_path,
+                                data=b_payload.encode('utf-8'),
+                                truck_id=b_truck_id,
+                                is_backlog="true"
+                            )
+                        except Exception as e:
+                            logger.error("Failed flushing backlog message for %s: %s", b_truck_id, e)
 
-        producer.poll(0)
-        
-        elapsed = time.time() - loop_start
-        sleep_dur = ping_interval - elapsed
-        if sleep_dur > 0:
-            time.sleep(sleep_dur)
+                # Send live event with is_backlog="false"
+                try:
+                    publisher.publish(
+                        topic_path,
+                        data=payload_json.encode('utf-8'),
+                        truck_id=truck_id,
+                        is_backlog="false"
+                    )
+                except Exception as e:
+                    logger.error("Pub/Sub publish failed for %s: %s", truck_id, e)
 
-    producer.flush(10)
+        # Dual-Speed Cadence:
+        # In Normal Mode: wait for 1-second interval to protect Firestore 1-write/sec limit
+        # In Burst/Event Mode (anomaly detected): bypass sleep timer to transmit alert immediately
+        if not has_critical_anomaly and not stress_mode:
+            elapsed = time.time() - loop_start
+            sleep_dur = ping_interval - elapsed
+            if sleep_dur > 0:
+                time.sleep(sleep_dur)
+        else:
+            # Burst mode: minimal yield to avoid starving CPU while transmitting immediately
+            time.sleep(0.01)
+
     logger.info("Generator stopped cleanly.")
 
 if __name__ == "__main__":

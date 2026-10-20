@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function KafkaThroughput({ metrics }) {
+export default function StreamThroughput({ metrics }) {
   const msgsPerSec = metrics?.msgs_per_sec ?? 4.7;
   const kbPerSec = metrics?.kb_per_sec ?? 6.8;
   const totalMsgs = metrics?.total_msgs_produced ? Number(metrics.total_msgs_produced).toLocaleString() : '28,416';
@@ -22,7 +22,7 @@ export default function KafkaThroughput({ metrics }) {
       {/* Header */}
       <div className="flex items-center justify-between pb-3 border-b border-[#3A2B20] mb-3">
         <h3 className="text-xs font-bold uppercase tracking-wider text-[#F5E6D3]">
-          Live Kafka Throughput
+          Live Pub/Sub Stream Throughput
         </h3>
         <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
           mode === 'STRESS'

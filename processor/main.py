@@ -2,12 +2,12 @@ import os
 import time
 import json
 import signal
+import uuid
 import logging
 from datetime import datetime, timezone
 from google.cloud import pubsub_v1
 from google.cloud import firestore
 from pydantic import ValidationError
-from confluent_kafka import Producer
 
 from models import TelemetryMessage
 from processing import classify, should_update_live_status, should_generate_alert
@@ -35,27 +35,34 @@ def handle_shutdown(signum, frame):
 signal.signal(signal.SIGTERM, handle_shutdown)
 signal.signal(signal.SIGINT, handle_shutdown)
 
-def send_to_dlq(producer, dlq_topic, raw_data, err_reason):
-    if producer and dlq_topic:
+def send_to_dlq(publisher, dlq_topic_path, raw_data, err_reason):
+    if publisher and dlq_topic_path:
         try:
             dlq_payload = json.dumps({
                 "raw": raw_data.decode('utf-8', errors='replace'),
                 "error": str(err_reason),
                 "failed_at": datetime.now(timezone.utc).isoformat()
             })
-            producer.produce(dlq_topic, value=dlq_payload.encode('utf-8'))
-            producer.poll(0)
+            publisher.publish(dlq_topic_path, data=dlq_payload.encode('utf-8'))
         except Exception as e:
-            logger.error("Failed to route invalid message to Kafka DLQ: %s", e)
+            logger.error("Failed to route invalid message to Pub/Sub DLQ: %s", e)
 
-def process_message(db, msg_payload: TelemetryMessage, alerts_publisher=None, alerts_topic_path=None):
+def process_message(db, msg_payload: TelemetryMessage, alerts_publisher=None, alerts_topic_path=None, is_backlog: bool = False):
     """
-    Firestore update with timestamp guard and alert generation.
-    Handles optimistic concurrency safely without pessimistic emulator lock timeouts.
-    Publishes alert events to alerts-topic for downstream driver/fleet notifications.
+    Firestore update with timestamp guard, isolated document routing (trucks/truck_{id}),
+    backlog bypass, and unique alert document generation.
     """
     truck_id = msg_payload.truck_id
+
+    # Backlog Protection:
+    # If is_backlog is true, data is already ingested into BigQuery analytical sink;
+    # completely bypass updating Firestore live status so real-time map doesn't glitch or warp backwards.
+    if is_backlog:
+        logger.info("📦 [BACKLOG DETECTED] Telemetry for %s is historical backlog. Bypassing Firestore live update (preserved in BigQuery).", truck_id)
+        return False
+
     doc_ref = db.collection("live_status").document(truck_id)
+    isolated_truck_ref = db.collection("trucks").document(f"truck_{truck_id}")
     alerts_col = db.collection("alerts")
 
     status, excess, reason = classify(
@@ -73,6 +80,7 @@ def process_message(db, msg_payload: TelemetryMessage, alerts_publisher=None, al
     existing_ts = existing_data.get("last_ts") if existing_data else None
     prev_status = existing_data.get("status") if existing_data else None
 
+    # Ingress Timestamp Guard: Discard stale / out-of-order writes
     if not should_update_live_status(msg_payload.ts, existing_ts):
         logger.warning("Ignoring out-of-order/duplicate telemetry for %s (incoming: %s <= existing: %s)",
                        truck_id, msg_payload.ts, existing_ts)
@@ -94,10 +102,15 @@ def process_message(db, msg_payload: TelemetryMessage, alerts_publisher=None, al
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
 
+    # Write to both isolated document route (trucks/truck_{id}) and live_status/{id}
+    isolated_truck_ref.set(updated_record)
     doc_ref.set(updated_record)
 
     if should_generate_alert(prev_status, status):
+        # Generate unique document ID for every alert
+        alert_doc_id = f"alert_{truck_id}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
         alert_payload = {
+            "alert_id": alert_doc_id,
             "truck_id": truck_id,
             "ts": msg_payload.ts,
             "status": status,
@@ -111,10 +124,10 @@ def process_message(db, msg_payload: TelemetryMessage, alerts_publisher=None, al
             "reason": reason,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
-        # 1. Store in Firestore audit collection
-        alerts_col.add(alert_payload)
-        logger.info("🚨 Generated ALERT for %s: %s (Cargo: %.1f°C, Setpoint: %.1f°C, Door: %s)",
-                    truck_id, reason, msg_payload.cargo_temp_c, msg_payload.setpoint_c, msg_payload.door_open)
+        # 1. Store in Firestore audit collection with unique document ID
+        alerts_col.document(alert_doc_id).set(alert_payload)
+        logger.info("🚨 Generated ALERT [%s] for %s: %s (Cargo: %.1f°C, Setpoint: %.1f°C, Door: %s)",
+                    alert_doc_id, truck_id, reason, msg_payload.cargo_temp_c, msg_payload.setpoint_c, msg_payload.door_open)
 
         # 2. Publish to alerts-topic for decoupled driver notification service
         if alerts_publisher and alerts_topic_path:
@@ -157,23 +170,17 @@ def main():
     project_id = os.environ.get("GCP_PROJECT_ID", "coldchain-local")
     sub_id = os.environ.get("PUBSUB_SUB", "telemetry-sub")
     alerts_topic_id = os.environ.get("PUBSUB_ALERTS_TOPIC", "alerts-topic")
-    dlq_topic = os.environ.get("KAFKA_TOPIC_DLQ", "truck-telemetry-dlq")
-    kafka_servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka-1:19092,kafka-2:19094")
+    dlq_topic_id = os.environ.get("PUBSUB_DLQ_TOPIC", "telemetry-dlq-topic")
 
     logger.info("Starting processor service for subscription %s (Project: %s)", sub_id, project_id)
 
     # Initialize Firestore Client
     db = firestore.Client(project=project_id)
 
-    # Initialize Alerts Publisher for Driver Notification fan-out
+    # Initialize Alerts & DLQ Publisher
     alerts_publisher = pubsub_v1.PublisherClient()
     alerts_topic_path = alerts_publisher.topic_path(project_id, alerts_topic_id)
-
-    # Optional Kafka producer for DLQ
-    try:
-        dlq_producer = Producer({'bootstrap.servers': kafka_servers, 'client.id': 'processor-dlq'})
-    except Exception:
-        dlq_producer = None
+    dlq_topic_path = alerts_publisher.topic_path(project_id, dlq_topic_id)
 
     subscriber = pubsub_v1.SubscriberClient()
     sub_path = subscriber.subscription_path(project_id, sub_id)
@@ -181,21 +188,22 @@ def main():
     def callback(message: pubsub_v1.subscriber.message.Message):
         raw_bytes = message.data
         msg_id = message.message_id  # unique per Pub/Sub message
+        is_backlog = (message.attributes.get("is_backlog", "").lower() in ("true", "1", "yes"))
         try:
             raw_dict = json.loads(raw_bytes.decode('utf-8'))
             telemetry_obj = TelemetryMessage(**raw_dict)
-            process_message(db, telemetry_obj, alerts_publisher=alerts_publisher, alerts_topic_path=alerts_topic_path)
+            process_message(db, telemetry_obj, alerts_publisher=alerts_publisher, alerts_topic_path=alerts_topic_path, is_backlog=is_backlog)
             # Successful — clean up any retry counter for this message
             _nack_retry_counts.pop(msg_id, None)
             message.ack()
         except ValidationError as ve:
             logger.error("Validation error for telemetry message: %s. Routing to DLQ.", ve)
-            send_to_dlq(dlq_producer, dlq_topic, raw_bytes, str(ve))
+            send_to_dlq(alerts_publisher, dlq_topic_path, raw_bytes, str(ve))
             _nack_retry_counts.pop(msg_id, None)
             message.ack()
         except json.JSONDecodeError as je:
             logger.error("JSON decode error: %s. Routing to DLQ.", je)
-            send_to_dlq(dlq_producer, dlq_topic, raw_bytes, str(je))
+            send_to_dlq(alerts_publisher, dlq_topic_path, raw_bytes, str(je))
             _nack_retry_counts.pop(msg_id, None)
             message.ack()
         except Exception as e:
@@ -208,7 +216,7 @@ def main():
                     "Message %s failed %d times (max=%d). Routing to DLQ: %s",
                     msg_id, retry_count, MAX_NACK_RETRIES, e
                 )
-                send_to_dlq(dlq_producer, dlq_topic, raw_bytes,
+                send_to_dlq(alerts_publisher, dlq_topic_path, raw_bytes,
                             f"Exceeded {MAX_NACK_RETRIES} retries: {e}")
                 _nack_retry_counts.pop(msg_id, None)
                 message.ack()

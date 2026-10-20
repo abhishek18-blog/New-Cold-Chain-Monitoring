@@ -18,6 +18,7 @@ const HIGHWAY_ROUTES = {
   'TRK-013': { route: 'Guwahati → Shillong', corridor: 'NH 6', waypoints: [[26.1445, 91.7362], [25.9080, 91.8670], [25.6890, 91.9050], [25.5788, 91.8933]] },
   'TRK-014': { route: 'Bhopal → Jabalpur', corridor: 'NH 45', waypoints: [[23.2599, 77.4126], [23.0850, 78.2120], [23.1230, 79.1450], [23.1815, 79.9864]] },
   'TRK-015': { route: 'Mangaluru → Udupi', corridor: 'NH 66', waypoints: [[12.9141, 74.8560], [13.0980, 74.7920], [13.2240, 74.7650], [13.3409, 74.7421]] },
+  'TRK-016': { route: 'Pune → Mumbai', corridor: 'Mumbai-Pune Expy', waypoints: [[18.5204, 73.8567], [18.7521, 73.4022], [18.9890, 73.1120], [19.0760, 72.8777]] },
 };
 
 export default function FleetMap({ trucks = [], onSelectTruck, selectedTruckId }) {

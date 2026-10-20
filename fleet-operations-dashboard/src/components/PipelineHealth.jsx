@@ -2,14 +2,14 @@ import React from 'react';
 import { Activity, Server, Radio, Database, Archive } from 'lucide-react';
 
 export default function PipelineHealth({ health }) {
-  const isKafkaOk = health?.kafka_connected !== false;
+  const isPubSubOk = health?.pubsub_connected !== false;
   const isFirestoreOk = health?.firestore_connected !== false;
 
   const services = [
-    { name: 'Kafka Cluster (KRaft)', icon: Server, status: isKafkaOk ? 'CONNECTED ●' : 'DEGRADED ●', active: isKafkaOk },
-    { name: 'Pub/Sub Bridge', icon: Radio, status: 'CONNECTED ●', active: true },
-    { name: 'Cloud Firestore', icon: Database, status: isFirestoreOk ? 'CONNECTED ●' : 'DISCONNECTED ●', active: isFirestoreOk },
-    { name: 'Raw Data Archiver', icon: Archive, status: 'ARCHIVING ●', active: true },
+    { name: 'Google Cloud Pub/Sub', icon: Radio, status: isPubSubOk ? 'STREAMING ●' : 'DEGRADED ●', active: isPubSubOk },
+    { name: 'Stream Processor (Cloud Run)', icon: Server, status: 'PROCESSING ●', active: true },
+    { name: 'Cloud Firestore NoSQL', icon: Database, status: isFirestoreOk ? 'CONNECTED ●' : 'DISCONNECTED ●', active: isFirestoreOk },
+    { name: 'BigQuery / Storage Stream', icon: Archive, status: 'INGESTING ●', active: true },
   ];
 
   return (
@@ -39,7 +39,7 @@ export default function PipelineHealth({ health }) {
       </div>
 
       <div className="mt-3 pt-3 border-t border-[#3A2B20]/60 text-[11px] text-[#C9B7A8]">
-        3 brokers · ISR 3/3 · replication healthy
+        GCP Serverless Event Pipeline · Pub/Sub Direct Ingestion
       </div>
     </div>
   );

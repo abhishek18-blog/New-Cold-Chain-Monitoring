@@ -18,6 +18,7 @@ const VEHICLES = [
   { id: 'TRK-013', label: 'TRK-013 · Guwahati → Shillong', route: 'NH 6 · Frozen -18°C', sp: -18.0 },
   { id: 'TRK-014', label: 'TRK-014 · Bhopal → Jabalpur', route: 'NH 45 · Chilled 4°C', sp: 4.0 },
   { id: 'TRK-015', label: 'TRK-015 · Mangaluru → Udupi', route: 'NH 66 · Frozen -22°C', sp: -22.0 },
+  { id: 'TRK-016', label: 'TRK-016 · Pune → Mumbai', route: 'Mumbai-Pune Expy · Chilled 4°C', sp: 4.0 },
 ];
 
 export default function AnalyticsToolbar({
