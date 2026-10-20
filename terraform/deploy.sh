@@ -131,6 +131,18 @@ echo ""
 echo ">>> [6/6] Initializing and applying Terraform infrastructure..."
 cd "$ROOT_DIR/terraform"
 
+# Ensure genuine terraform binary is installed (resolves Cloud Shell wrapper prompt)
+if ! terraform version >/dev/null 2>&1; then
+  echo "⚡ Terraform not detected. Automatically downloading standalone binary..."
+  mkdir -p "$HOME/bin"
+  curl -fsSL https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip -o /tmp/terraform.zip
+  unzip -q -o /tmp/terraform.zip -d "$HOME/bin"
+  rm -f /tmp/terraform.zip
+  export PATH="$HOME/bin:$PATH"
+  echo "export PATH=\"\$HOME/bin:\$PATH\"" >> "$HOME/.bashrc" 2>/dev/null || true
+  echo "✅ Terraform installed successfully in $HOME/bin!"
+fi
+
 terraform init
 
 # Helper function to check if resource exists in state safely
