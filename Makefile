@@ -56,4 +56,4 @@ tf-deploy:
 	./terraform/deploy.sh
 
 tf-destroy:
-	cd terraform && terraform destroy
+	./terraform/destroy.sh

@@ -143,6 +143,12 @@ if ! terraform version >/dev/null 2>&1; then
   echo "✅ Terraform installed successfully in $HOME/bin!"
 fi
 
+# Export gcloud access token to bypass Cloud Shell metadata server token EOF errors
+ACCESS_TOKEN="$(gcloud auth print-access-token 2>/dev/null || true)"
+if [ -n "$ACCESS_TOKEN" ]; then
+  export GOOGLE_OAUTH_ACCESS_TOKEN="$ACCESS_TOKEN"
+fi
+
 terraform init
 
 # Helper function to check if resource exists in state safely

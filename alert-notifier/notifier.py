@@ -4,6 +4,7 @@ import time
 import json
 import signal
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 try:
@@ -53,6 +54,23 @@ alert_manager = AlertManager()
 # Maps truck_id -> last_notified_epoch_timestamp
 _alert_cooldowns: Dict[str, float] = {}
 
+class WebhookRateLimiter:
+    """Thread-safe rate limiter enforcing max requests per second (e.g. 2 req/s for Discord webhook)."""
+    def __init__(self, max_per_second: float = 2.0):
+        self.interval = 1.0 / max_per_second
+        self.last_call = 0.0
+        self.lock = threading.Lock()
+
+    def acquire(self):
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_call
+            if elapsed < self.interval:
+                time.sleep(self.interval - elapsed)
+            self.last_call = time.time()
+
+discord_rate_limiter = WebhookRateLimiter(max_per_second=2.0)
+
 def handle_shutdown(signum, frame):
     global running
     logger.info("Received signal %s. Shutting down alert-notifier gracefully...", signum)
@@ -61,10 +79,10 @@ def handle_shutdown(signum, frame):
 signal.signal(signal.SIGTERM, handle_shutdown)
 signal.signal(signal.SIGINT, handle_shutdown)
 
-def should_send_notification(truck_id: str, cooldown_seconds: float = 300.0, current_time: Optional[float] = None) -> bool:
+def should_send_notification(truck_id: str, cooldown_seconds: float = 60.0, current_time: Optional[float] = None) -> bool:
     """
     Check if an alert should be sent or suppressed due to cooldown / debouncing.
-    Default cooldown: 300 seconds (5 minutes) per truck.
+    Default cooldown: 60 seconds (1 minute) per truck matching architecture.txt.
     """
     now = current_time if current_time is not None else time.time()
     last_sent = _alert_cooldowns.get(truck_id, 0.0)
@@ -233,6 +251,9 @@ def dispatch_discord_alert(
         method="POST"
     )
 
+    # Rate limit outgoing webhooks to max 2 req/s (architecture.txt requirement)
+    discord_rate_limiter.acquire()
+
     try:
         with urllib.request.urlopen(req, timeout=10.0) as resp:
             logger.info("📱 [DISCORD ALERT SUCCESS] Dispatched to driver app (%s) - HTTP %d", driver_info.get('name'), resp.status)
@@ -298,11 +319,11 @@ def dispatch_fleet_ops_alert(truck_id: str, alert_data: Dict[str, Any], driver_i
     }
     logger.info("📢 [FLEET OPS NOTIFIED] %s", json.dumps(ops_payload))
 
-def process_alert_event(alert_dict: Dict[str, Any], cooldown_seconds: float = 300.0) -> bool:
+def process_alert_event(alert_dict: Dict[str, Any], cooldown_seconds: float = 60.0) -> bool:
     """
     Process incoming alert event from alerts-topic:
     1. Look up driver metadata
-    2. Check rate-limit cooldown
+    2. Check rate-limit cooldown (60s default)
     3. Dispatch multi-channel alerts (Driver Discord App, In-Cab Buzzer, Ops Channel)
     """
     truck_id = alert_dict.get("truck_id", "UNKNOWN")
@@ -359,7 +380,7 @@ def main():
     start_health_server()
     project_id = os.environ.get("GCP_PROJECT_ID", "coldchain-local")
     alerts_sub_id = os.environ.get("PUBSUB_ALERTS_SUB", "alerts-sub")
-    cooldown_seconds = float(os.environ.get("ALERT_COOLDOWN_SEC", "300"))
+    cooldown_seconds = float(os.environ.get("ALERT_COOLDOWN_SEC", "60"))
 
     logger.info("Starting alert-notifier service listening on %s (Cooldown: %ds)...", alerts_sub_id, cooldown_seconds)
 

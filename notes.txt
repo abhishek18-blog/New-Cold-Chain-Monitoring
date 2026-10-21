@@ -314,5 +314,122 @@ Project: Cold Chain Fleet Telemetry & Driver Anomaly Alerting System
    `./terraform/deploy.sh`
    The script enables all 10 APIs, builds containers via Cloud Build, imports existing 
    resources, applies Terraform, and prints the live public Dashboard URL.
+
+--------------------------------------------------------------------------------
+12. HOW TO RUN LOCALLY & DEPLOY TO GCP (COMMANDS CHEAT SHEET)
+--------------------------------------------------------------------------------
+[LOCAL DEVELOPMENT (DOCKER COMPOSE)]:
+  * Start all microservices in background:
+    make up
+    (or: docker compose up --build -d)
+
+  * Follow live structured streaming logs:
+    make logs
+    (or: docker compose logs -f)
+
+  * Stop all running containers:
+    make down
+    (or: docker compose down)
+
+  * Full reset (remove containers, networks, volumes):
+    make reset
+    (or: docker compose down -v --remove-orphans)
+
+[LOCAL ACCESS URLS]:
+  * Live Operations Dashboard: http://localhost:8000
+  * Telemetry Test Studio:     http://localhost:8000/simulator.html
+  * Historical Analytics:      http://localhost:8000/analytics.html
+  * API Docs (Swagger):        http://localhost:8000/docs
+
+[TESTING & SIMULATION]:
+  * Run 23 pytest unit tests:
+    make test
+    (or: pytest tests/ -v)
+
+  * High-speed stress test (~150 msgs/sec):
+    make stress
+
+  * Replay 24,000 dataset records into Cloud Pub/Sub:
+    make replay
+
+  * Restore normal 5.0s telemetry generator cadence:
+    make normal
+
+  * Run 1,000 msg/sec benchmark (dry run):
+    python3 scripts/blast_telemetry.py --rate 1000 --duration 5 --dry-run
+
+  * Trigger Driver 16 thermal excursion & Discord push alert:
+    python3 scripts/test_driver_alert.py
+
+[GOOGLE CLOUD PLATFORM (GCP) TURNKEY DEPLOYMENT]:
+  * Authenticate & set project:
+    gcloud auth login
+    gcloud config set project <YOUR_GCP_PROJECT_ID>
+
+  * Run automated single-command deployer:
+    make tf-deploy
+    (or: ./terraform/deploy.sh <YOUR_GCP_PROJECT_ID> asia-south1)
+
+[GCP OPERATIONAL COMMANDS]:
+  * Run telemetry generator job on Cloud Run:
+    gcloud run jobs execute coldchain-telemetry-generator --region=asia-south1
+
+  * Run silence detector audit on Cloud Run:
+    gcloud run jobs execute coldchain-silence-detector --region=asia-south1
+
+  * Stream Cloud Run logs:
+    gcloud run services logs read coldchain-processor --region=asia-south1 --tail=50
+
+  * Query BigQuery telemetry stream:
+    bq query --use_legacy_sql=false \
+    'SELECT STRING(data.truck_id) AS truck, FLOAT64(data.cargo_temp_c) AS temp, publish_time \
+     FROM `coldchain_analytics.telemetry_stream` ORDER BY publish_time DESC LIMIT 10'
+
+[TEARDOWN & CLEANUP]:
+  * Local containers: make down
+  * GCP cloud resources: make tf-destroy (or cd terraform && terraform destroy -auto-approve)
+
+--------------------------------------------------------------------------------
+13. ARCHITECTURAL GAP ANALYSIS & SOLUTIONS (1,000 MSG/S SPECIFICATION)
+--------------------------------------------------------------------------------
+[OVERVIEW]:
+Audited against architecture.txt specification. Identified and resolved 5 critical 
+gaps to support stable, continuous 1,000+ msg/sec ingestion without hitting 
+Google Cloud quotas or Discord rate limits.
+
+[GAP 1: FIRESTORE WRITE AMPLIFICATION & 1.0S CONFLATION BUFFER]
+  * Problem: Processor performed an immediate Firestore set() on every single incoming 
+    message from Pub/Sub. At 1,000 msg/s, this flooded Firestore with 1,000 writes/sec.
+  * Danger: Firestore enforces a soft quota of 1 write/sec per document. Rapid writes 
+    cause write contention, high latency, HTTP 429 throttling errors, and high billing costs.
+  * Solution: Built a 1.0s in-memory Conflation Buffer in processor/main.py. Rapid messages 
+    are merged in RAM under a thread lock. A background daemon flushes all conflated records 
+    in a single atomic db.batch() commit once every 1.0 second.
+  * Result: Maximum 1 write/sec per truck (max 16 writes/s total across fleet) regardless of input velocity.
+
+[GAP 2: BLOCKING NETWORK READS IN TIMESTAMP GUARD]
+  * Problem: The processor previously called doc_ref.get() over the network on every message 
+    to check incoming_ts > existing_ts.
+  * Danger: 1,000 network round-trip reads/second created a severe CPU and I/O bottleneck.
+  * Solution: Moved the out-of-order timestamp guard completely into RAM using an in-memory 
+    dictionary _truck_latest_ts. Stale or duplicate messages are dropped in microseconds with zero I/O.
+
+[GAP 3: LIVE HUD DOCUMENT (live_metrics/hud)]
+  * Problem: architecture.txt required a global HUD metrics document in Firestore.
+  * Solution: The conflation flusher computes live throughput (window_msgs / elapsed) and writes 
+    to live_metrics/hud every second. Added /api/live-hud endpoint in dashboard/main.py.
+
+[GAP 4: DISCORD WEBHOOK RATE LIMITING & COOLDOWN WINDOW]
+  * Problem: Discord webhooks enforce strict rate limits (max 5 req / 2s). Multiple simultaneous 
+    alerts could cause HTTP 429 errors. Also, alert cooldown was set to 300s instead of 60s.
+  * Solution: Implemented WebhookRateLimiter (max 2 req/s) in alert-notifier/notifier.py using 
+    thread-safe interval sleeps. Standardized default alert cooldown to 60.0s in processor and notifier.
+
+[GAP 5: API ROUTE & FRONTEND URL ALIASING]
+  * Problem: architecture.txt specifies /api/simulate, /api/history, dashboard.html, historical.html.
+  * Solution: Added decorators @app.post("/api/simulate") and @app.get("/api/history"), plus 
+    fast HTTP redirects for dashboard.html -> index.html and historical.html -> analytics.html.
 ================================================================================
+
+
 

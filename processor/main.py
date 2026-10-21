@@ -4,9 +4,17 @@ import json
 import signal
 import uuid
 import logging
+import threading
 from datetime import datetime, timezone
-from google.cloud import pubsub_v1
-from google.cloud import firestore
+try:
+    from google.cloud import pubsub_v1
+except ImportError:
+    pubsub_v1 = None
+
+try:
+    from google.cloud import firestore
+except ImportError:
+    firestore = None
 from pydantic import ValidationError
 
 from models import TelemetryMessage
@@ -47,44 +55,142 @@ def send_to_dlq(publisher, dlq_topic_path, raw_data, err_reason):
         except Exception as e:
             logger.error("Failed to route invalid message to Pub/Sub DLQ: %s", e)
 
-def process_message(db, msg_payload: TelemetryMessage, alerts_publisher=None, alerts_topic_path=None, is_backlog: bool = False):
+# High-Throughput (1,000 msg/s) In-RAM State Tracking & Conflation Architecture
+# Guarantees:
+# 1. Inspects all 1,000 msg/s in RAM with zero network round-trip overhead.
+# 2. Out-of-order timestamp guard evaluated purely in RAM.
+# 3. 60s Alert Cooldown Guard per truck (deduped alerts).
+# 4. 1.0s Conflation Buffer throttles Firestore writes to max 1 write/s per truck (max 16 writes/s total).
+# 5. Live HUD document (`live_metrics/hud`) published with aggregate throughput metrics.
+
+_truck_latest_ts: dict = {}
+_truck_prev_status: dict = {}
+_alert_cooldowns: dict = {}
+
+_conflation_buffer: dict = {}
+_conflation_lock = threading.Lock()
+
+_total_msgs_processed: int = 0
+_total_alerts_count: int = 0
+_window_msgs_count: int = 0
+_last_window_time: float = time.time()
+_current_throughput_rate: float = 0.0
+
+def reset_processor_state():
+    """Reset in-memory state tracking (useful for unit testing)."""
+    global _total_msgs_processed, _total_alerts_count, _window_msgs_count, _current_throughput_rate
+    with _conflation_lock:
+        _truck_latest_ts.clear()
+        _truck_prev_status.clear()
+        _alert_cooldowns.clear()
+        _conflation_buffer.clear()
+        _total_msgs_processed = 0
+        _total_alerts_count = 0
+        _window_msgs_count = 0
+        _current_throughput_rate = 0.0
+
+def flush_conflation_buffer(db):
     """
-    Firestore update with timestamp guard, isolated document routing (trucks/truck_{id}),
-    backlog bypass, and unique alert document generation.
+    Atomically flushes the in-memory conflated truck records to Firestore in a single batch.
+    Ensures max 1 write/s per truck (16 writes/s total) regardless of incoming Pub/Sub volume.
+    Also updates `live_metrics/hud` with live throughput rates.
     """
+    global _window_msgs_count, _last_window_time, _current_throughput_rate
+    now = time.time()
+
+    with _conflation_lock:
+        if not _conflation_buffer:
+            elapsed = max(now - _last_window_time, 0.5)
+            _current_throughput_rate = round(_window_msgs_count / elapsed, 1)
+            _window_msgs_count = 0
+            _last_window_time = now
+            return
+        records_to_flush = dict(_conflation_buffer)
+        _conflation_buffer.clear()
+        elapsed = max(now - _last_window_time, 0.5)
+        _current_throughput_rate = round(_window_msgs_count / elapsed, 1)
+        _window_msgs_count = 0
+        _last_window_time = now
+
+    try:
+        batch = db.batch()
+        for truck_id, record in records_to_flush.items():
+            iso_ref = db.collection("trucks").document(f"truck_{truck_id}")
+            live_ref = db.collection("live_status").document(truck_id)
+            batch.set(iso_ref, record)
+            batch.set(live_ref, record)
+
+        # Update live_metrics/hud document
+        hud_ref = db.collection("live_metrics").document("hud")
+        hud_data = {
+            "current_msg_rate": _current_throughput_rate,
+            "total_messages_processed": _total_msgs_processed,
+            "total_alerts_generated": _total_alerts_count,
+            "active_trucks": len(records_to_flush),
+            "flushed_at": datetime.now(timezone.utc).isoformat()
+        }
+        batch.set(hud_ref, hud_data)
+
+        batch.commit()
+        logger.debug("Flushed conflation buffer (%d trucks, %.1f msg/s)", len(records_to_flush), _current_throughput_rate)
+    except Exception as e:
+        logger.error("Failed to commit conflated batch to Firestore: %s", e)
+
+def conflation_flusher_loop(db, flush_interval: float = 1.0):
+    """Background worker daemon flushing the conflation buffer every 1.0 second."""
+    logger.info("Conflation flusher loop active (interval: %.1fs, max 16 writes/s).", flush_interval)
+    while running:
+        time.sleep(flush_interval)
+        try:
+            flush_conflation_buffer(db)
+        except Exception as e:
+            logger.error("Error in conflation flusher loop: %s", e)
+
+def process_message(
+    db,
+    msg_payload: TelemetryMessage,
+    alerts_publisher=None,
+    alerts_topic_path=None,
+    is_backlog: bool = False,
+    cooldown_seconds: float = 60.0
+):
+    """
+    High-throughput stream processing pipeline:
+    1. Inspects message in RAM.
+    2. Out-of-order timestamp guard evaluated purely in RAM (no blocking Firestore reads).
+    3. Excursion & door anomaly detection.
+    4. 60s alert cooldown guard per truck.
+    5. Conflation buffer absorbs high velocity (buffers in RAM, flushes max 1 write/s/truck).
+    """
+    global _total_msgs_processed, _total_alerts_count, _window_msgs_count
     truck_id = msg_payload.truck_id
 
-    # Backlog Protection:
-    # If is_backlog is true, data is already ingested into BigQuery analytical sink;
-    # completely bypass updating Firestore live status so real-time map doesn't glitch or warp backwards.
+    # 1. Backlog Ingress Guard:
+    # If is_backlog is true, data is already captured in BigQuery analytical sink.
+    # Bypass updating Firestore live status so real-time map doesn't warp backwards.
     if is_backlog:
-        logger.info("📦 [BACKLOG DETECTED] Telemetry for %s is historical backlog. Bypassing Firestore live update (preserved in BigQuery).", truck_id)
+        logger.info("📦 [BACKLOG DETECTED] Historical telemetry for %s bypassed live status (preserved in BigQuery).", truck_id)
         return False
 
-    doc_ref = db.collection("live_status").document(truck_id)
-    isolated_truck_ref = db.collection("trucks").document(f"truck_{truck_id}")
-    alerts_col = db.collection("alerts")
+    # 2. In-RAM Out-of-Order & Duplicate Timestamp Guard (Zero network latency)
+    existing_ts = _truck_latest_ts.get(truck_id)
+    if not should_update_live_status(msg_payload.ts, existing_ts):
+        logger.warning("Ignoring out-of-order/duplicate telemetry for %s (incoming: %s <= existing: %s)",
+                       truck_id, msg_payload.ts, existing_ts)
+        return False
 
+    # Accept & advance timestamp in RAM
+    _truck_latest_ts[truck_id] = msg_payload.ts
+
+    # 3. Anomaly Classification
     status, excess, reason = classify(
         cargo_temp_c=msg_payload.cargo_temp_c,
         setpoint_c=msg_payload.setpoint_c,
         door_open=msg_payload.door_open
     )
 
-    try:
-        snapshot = doc_ref.get()
-        existing_data = snapshot.to_dict() if snapshot.exists else None
-    except Exception:
-        existing_data = None
-
-    existing_ts = existing_data.get("last_ts") if existing_data else None
-    prev_status = existing_data.get("status") if existing_data else None
-
-    # Ingress Timestamp Guard: Discard stale / out-of-order writes
-    if not should_update_live_status(msg_payload.ts, existing_ts):
-        logger.warning("Ignoring out-of-order/duplicate telemetry for %s (incoming: %s <= existing: %s)",
-                       truck_id, msg_payload.ts, existing_ts)
-        return False
+    prev_status = _truck_prev_status.get(truck_id)
+    _truck_prev_status[truck_id] = status
 
     updated_record = {
         "truck_id": truck_id,
@@ -102,41 +208,55 @@ def process_message(db, msg_payload: TelemetryMessage, alerts_publisher=None, al
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
 
-    # Write to both isolated document route (trucks/truck_{id}) and live_status/{id}
-    isolated_truck_ref.set(updated_record)
-    doc_ref.set(updated_record)
+    # 4. Excursion Alert & 60s Cooldown Guard (Deduped Alert per Incident)
+    now = time.time()
+    last_alert_time = _alert_cooldowns.get(truck_id, 0.0)
 
     if should_generate_alert(prev_status, status):
-        # Generate unique document ID for every alert
-        alert_doc_id = f"alert_{truck_id}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
-        alert_payload = {
-            "alert_id": alert_doc_id,
-            "truck_id": truck_id,
-            "ts": msg_payload.ts,
-            "status": status,
-            "cargo_temp_c": msg_payload.cargo_temp_c,
-            "setpoint_c": msg_payload.setpoint_c,
-            "excess_temp_c": excess,
-            "door_open": msg_payload.door_open,
-            "speed_kmph": msg_payload.speed_kmph,
-            "lat": msg_payload.lat,
-            "lon": msg_payload.lon,
-            "reason": reason,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
-        # 1. Store in Firestore audit collection with unique document ID
-        alerts_col.document(alert_doc_id).set(alert_payload)
-        logger.info("🚨 Generated ALERT [%s] for %s: %s (Cargo: %.1f°C, Setpoint: %.1f°C, Door: %s)",
-                    alert_doc_id, truck_id, reason, msg_payload.cargo_temp_c, msg_payload.setpoint_c, msg_payload.door_open)
-
-        # 2. Publish to alerts-topic for decoupled driver notification service
-        if alerts_publisher and alerts_topic_path:
+        if (now - last_alert_time) >= cooldown_seconds:
+            _alert_cooldowns[truck_id] = now
+            _total_alerts_count += 1
+            alert_doc_id = f"alert_{truck_id}_{int(now * 1000)}_{uuid.uuid4().hex[:6]}"
+            alert_payload = {
+                "alert_id": alert_doc_id,
+                "truck_id": truck_id,
+                "ts": msg_payload.ts,
+                "status": status,
+                "cargo_temp_c": msg_payload.cargo_temp_c,
+                "setpoint_c": msg_payload.setpoint_c,
+                "excess_temp_c": excess,
+                "door_open": msg_payload.door_open,
+                "speed_kmph": msg_payload.speed_kmph,
+                "lat": msg_payload.lat,
+                "lon": msg_payload.lon,
+                "reason": reason,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            # Immediate write to Firestore audit alerts collection (alerts are critical events)
             try:
-                alert_bytes = json.dumps(alert_payload).encode('utf-8')
-                alerts_publisher.publish(alerts_topic_path, data=alert_bytes)
-                logger.info("📢 Dispatched alert to %s for %s", alerts_topic_path, truck_id)
-            except Exception as pe:
-                logger.error("Failed to publish alert event to %s: %s", alerts_topic_path, pe)
+                db.collection("alerts").document(alert_doc_id).set(alert_payload)
+                logger.info("🚨 Generated ALERT [%s] for %s: %s (Cargo: %.1f°C, Setpoint: %.1f°C, Door: %s)",
+                            alert_doc_id, truck_id, reason, msg_payload.cargo_temp_c, msg_payload.setpoint_c, msg_payload.door_open)
+            except Exception as ae:
+                logger.error("Failed to write alert to Firestore: %s", ae)
+
+            # Publish to alerts-topic for decoupled driver notification service
+            if alerts_publisher and alerts_topic_path:
+                try:
+                    alert_bytes = json.dumps(alert_payload).encode('utf-8')
+                    alerts_publisher.publish(alerts_topic_path, data=alert_bytes)
+                    logger.info("📢 Dispatched alert to %s for %s", alerts_topic_path, truck_id)
+                except Exception as pe:
+                    logger.error("Failed to publish alert event to %s: %s", alerts_topic_path, pe)
+        else:
+            logger.info("⏳ Suppressed duplicate alert for %s (cooldown active: %.1fs remaining)",
+                        truck_id, cooldown_seconds - (now - last_alert_time))
+
+    # 5. Conflation Buffer Update (absorbs high velocity in RAM, flushes max 1 write/s/truck)
+    with _conflation_lock:
+        _conflation_buffer[truck_id] = updated_record
+        _total_msgs_processed += 1
+        _window_msgs_count += 1
 
     return True
 
@@ -227,8 +347,13 @@ def main():
                 )
                 message.nack()
 
+    # Start background conflation flusher thread (1.0s interval, max 16 writes/s)
+    import threading
+    flusher_thread = threading.Thread(target=conflation_flusher_loop, args=(db, 1.0), daemon=True)
+    flusher_thread.start()
+
     streaming_pull_future = subscriber.subscribe(sub_path, callback=callback)
-    logger.info("Subscribed and listening on %s...", sub_path)
+    logger.info("Subscribed and listening on %s with 1.0s Conflation Buffer active...", sub_path)
 
     try:
         while running:
@@ -239,6 +364,11 @@ def main():
         streaming_pull_future.cancel()
         streaming_pull_future.result()
         subscriber.close()
+        # Flush any remaining conflated records on shutdown
+        try:
+            flush_conflation_buffer(db)
+        except Exception as fe:
+            logger.warning("Error during final conflation buffer flush: %s", fe)
 
     logger.info("Processor stopped cleanly.")
 

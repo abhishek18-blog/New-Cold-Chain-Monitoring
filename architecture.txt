@@ -1,0 +1,46 @@
+ ┌─────────────────────────────────────────────────────────────────┐
+ │ 💻 1. simulator.html (Telemetry Test Studio)                    │
+ │   • Normal Mode: 16 Trucks @ 1.0s (16 msg/s)                    │
+ │   • Stress Mode: 1,000 msg/s Burst + Fault/Excursion Injection  │
+ └──────────────────────────────┬──────────────────────────────────┘
+                                │ HTTP POST /api/simulate (Batch Publish)
+                                ▼
+ ┌─────────────────────────────────────────────────────────────────┐
+ │ ⚡ GOOGLE CLOUD PUB/SUB INGESTION ENGINE                         │
+ │   • telemetry-topic  ──► Direct BigQuery Subscription           │
+ │   • telemetry-topic  ──► telemetry-sub (Cloud Run Processor)    │
+ │   • alerts-topic     ──► alerts-sub (Alert Notification Worker) │
+ │   • telemetry-dlq-topic (Quarantine for Malformed Payloads)     │
+ └────────┬─────────────────────────────┬──────────────────────────┘
+          │                             │
+          │ 1. Zero-Code Write API      │ 2. Streaming Pull (All 1,000 msg/s)
+          │    (100% Raw Data)          │
+          ▼                             ▼
+ ┌─────────────────────────┐  ┌────────────────────────────────────────────┐
+ │ 📊 GOOGLE BIGQUERY      │  │ 🚀 CLOUD RUN: Stream Processor & API       │
+ │   coldchain_analytics   │  │   • Inspects ALL 1,000 msg/s in RAM        │
+ │   .telemetry_stream     │  │   • Out-of-Order Timestamp Guard (in RAM)  │
+ │   • Partition: Day (ts) │  │   • Excursion & Door Anomaly Detection     │
+ │   • Cluster: truck_id   │  │   • 1.0s Conflation Buffer (16 writes/s)   │
+ │   • 30-Day Table TTL    │  │   • 60s Alert Cooldown Guard per Truck     │
+ └────────┬────────────────┘  └─────────┬───────────────────────┬──────────┘
+          │                             │                       │
+          │ Nightly Archival            │ Throttled Batch Write │ Deduped Alert
+          │ + SQL Aggregation           │ (Max 1 write/s/truck) │ (1 per incident)
+          ▼                             ▼                       ▼
+ ┌─────────────────────────┐  ┌──────────────────────┐ ┌───────────────────────────┐
+ │ 🗄️ GOOGLE CLOUD STORAGE │  │ 🔥 CLOUD FIRESTORE   │ │ 📢 CLOUD RUN:             │
+ │   Cold GZIP JSONL       │  │   • trucks/truck_{id}│ │     Alert Notifier        │
+ │   Archive Bucket        │  │   • live_metrics/hud │ │   • Discord Webhook Push  │
+ └────────┬────────────────┘  │   • alerts/{id}      │ │   • Rate-Limited (2 req/s)│
+          │                   └─────────┬────────────┘ └───────────────────────────┘
+          │                             │
+          │ GET /api/history            │ onSnapshot() WebSocket (1 Hz)
+          │ (BigQuery Time-Buckets)     │ + CSS 60 FPS Marker Gliding
+          ▼                             ▼
+ ┌─────────────────────────┐  ┌────────────────────────────────────────────┐
+ │ 📈 3. historical.html   │  │ 🗺️ 2. dashboard.html (Live Operations)     │
+ │   • Pulls from BigQuery │  │   • Leaflet Multi-Truck Real-time Map      │
+ │   • Temp Trend Charts   │  │   • Live Throughput Counter (1,000 msg/s)  │
+ │   • Throughput Bar Chart│  │   • Instant Excursion Alert Toasts         │
+ └─────────────────────────┘  └────────────────────────────────────────────┘

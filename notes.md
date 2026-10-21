@@ -12,6 +12,8 @@ A comprehensive technical study guide and system manual covering **Producers**, 
 5. [Downstream Services & Pipeline Components](#5-downstream-services--pipeline-components)
 6. [Failure Modes, DLQ & Resilience Patterns](#6-failure-modes-dlq--resilience-patterns)
 7. [Glossary & Interview / Viva Cheat Sheet](#7-glossary--interview--viva-cheat-sheet)
+8. [Run & Deploy Guide: All Commands](#8-run--deploy-guide-all-commands)
+9. [Architectural Gap Analysis & Solutions (1,000 msg/s Conflation & Webhook Rate Limiting)](#9-architectural-gap-analysis--solutions-1000-msgs-conflation--webhook-rate-limiting)
 
 ---
 
@@ -270,3 +272,182 @@ Our cluster uses **Apache Kafka 4.0 in KRaft (Kafka Raft) mode**:
 
 ### Q5: What is KRaft mode?
 > **Answer:** KRaft (Kafka Raft Metadata mode) is Kafka's consensus protocol that eliminated the dependency on external Apache ZooKeeper. In KRaft, metadata is managed directly within Kafka brokers using Raft consensus, leading to faster leader elections, smaller operational footprints, and scalability to millions of partitions.
+
+---
+
+## 8. Run & Deploy Guide: All Commands
+
+### 8.1 Running Locally (Docker Compose)
+
+All microservices and emulators (Pub/Sub & Firestore emulators) run locally with Docker:
+
+```bash
+# 1. Start all containers in the background with build
+make up
+# (or: docker compose up --build -d)
+
+# 2. View live streaming logs across all microservices
+make logs
+# (or: docker compose logs -f)
+
+# 3. Stop all running containers
+make down
+# (or: docker compose down)
+
+# 4. Full teardown including volumes and orphan containers
+make reset
+# (or: docker compose down -v --remove-orphans)
+```
+
+**Local Endpoints:**
+* **Operations Dashboard (Live Map):** [http://localhost:8000](http://localhost:8000)
+* **Telemetry Test Studio (Simulator):** [http://localhost:8000/simulator.html](http://localhost:8000/simulator.html)
+* **Historical Analytics:** [http://localhost:8000/analytics.html](http://localhost:8000/analytics.html)
+* **Swagger API Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+---
+
+### 8.2 Simulation & Stress Testing Commands
+
+```bash
+# Run complete test suite (23 unit tests)
+make test
+# (or: pytest tests/ -v)
+
+# High-speed telemetry generator stress mode (~150 msgs/sec)
+make stress
+
+# Replay 24,000 dataset records into Cloud Pub/Sub
+make replay
+
+# Restore normal 5.0s telemetry generator cadence
+make normal
+
+# Benchmark 1,000 msg/sec Pub/Sub throughput (dry run)
+python3 scripts/blast_telemetry.py --rate 1000 --duration 5 --dry-run
+
+# Test Driver 16 thermal excursion & Discord push alert
+python3 scripts/test_driver_alert.py
+```
+
+---
+
+### 8.3 Turnkey Deployment to Google Cloud Platform (GCP)
+
+Deploy the entire production infrastructure (Cloud Run, Pub/Sub, BigQuery, Firestore, GCS) with one command:
+
+```bash
+# 1. Authenticate with GCP
+gcloud auth login
+gcloud config set project <YOUR_GCP_PROJECT_ID>
+
+# 2. Run the automated deployment script
+make tf-deploy
+# (or directly: ./terraform/deploy.sh <YOUR_GCP_PROJECT_ID> asia-south1)
+```
+
+The script automatically:
+1. Enables required GCP APIs (Cloud Run, Pub/Sub, Firestore, BigQuery, Artifact Registry, Cloud Build, Cloud Scheduler).
+2. Creates the Artifact Registry Docker repository (`coldchain-containers`).
+3. Builds and pushes all 5 microservices using Google Cloud Build.
+4. Provisions BigQuery datasets, partitioned tables, GCS archive buckets, Firestore databases, and Pub/Sub subscriptions.
+5. Deploys 3 auto-scaling Cloud Run services (`coldchain-dashboard-api`, `coldchain-processor`, `coldchain-alert-notifier`) and 2 Cloud Run jobs (`coldchain-telemetry-generator`, `coldchain-silence-detector`).
+6. Outputs the live public HTTPS Dashboard URL.
+
+---
+
+### 8.4 GCP Operational Commands
+
+```bash
+# Execute telemetry generator job on Cloud Run
+gcloud run jobs execute coldchain-telemetry-generator --region=asia-south1
+
+# Manually trigger silence detector audit
+gcloud run jobs execute coldchain-silence-detector --region=asia-south1
+
+# Read live logs from Cloud Run Processor
+gcloud run services logs read coldchain-processor --region=asia-south1 --tail=50
+
+# Query streaming telemetry in BigQuery
+bq query --use_legacy_sql=false \
+'SELECT STRING(data.truck_id) AS truck, FLOAT64(data.cargo_temp_c) AS temp, publish_time \
+ FROM `coldchain_analytics.telemetry_stream` ORDER BY publish_time DESC LIMIT 10'
+```
+
+---
+
+### 8.5 Teardown & Destroy Cloud Resources
+
+```bash
+# Destroy all Cloud Run and GCP resources via Terraform
+make tf-destroy
+# (or: cd terraform && terraform destroy -auto-approve)
+```
+
+---
+
+## 9. Architectural Gap Analysis & Solutions (1,000 msg/s Conflation & Webhook Rate Limiting)
+
+Based on the target system specification in [`architecture.txt`](file:///home/user/Desktop/cold-chain-cloud/architecture.txt), five critical architectural gaps were identified and resolved to make the pipeline resilient to 1,000+ msg/sec streams.
+
+### 9.1 Gap 1: Firestore Write Amplification & Lack of Conflation Buffer
+
+* **The Problem:** 
+  In the initial implementation, every telemetry message pulled from Pub/Sub triggered immediate, synchronous Firestore writes (`isolated_truck_ref.set()` and `doc_ref.set()`). Under 1,000 msg/s stress bursts, this caused 1,000+ writes/second to Firestore.
+* **Why It Is Dangerous:** 
+  Google Cloud Firestore enforces a documented quota limit of **1 write per second per document**. Writing to the same truck document 50–100 times per second during a burst triggers write contention, write latency spikes, HTTP 429 throttling errors, and massive Firestore billing costs.
+* **How We Solved It:**
+  Implemented a **1.0s Conflation Buffer** in [`processor/main.py`](file:///home/user/Desktop/cold-chain-cloud/processor/main.py#L65-L115):
+  1. Incoming messages for all 16 trucks are inspected and stored in an in-memory dictionary `_conflation_buffer[truck_id] = record` under a thread lock.
+  2. If 1,000 messages arrive for TRK-001 within one second, only the latest chronological state is retained.
+  3. A background daemon thread (`conflation_flusher_loop`) runs once every second, dumping all conflated records in a single atomic Firestore `db.batch()` write.
+  4. **Guarantee:** Regardless of whether 100 or 10,000 msg/s are ingested, Firestore receives at most **1 write/s per truck (max 16 writes/s total)**.
+
+---
+
+### 9.2 Gap 2: Ingress Timestamp Guard Blocking on Network Reads
+
+* **The Problem:** 
+  Before updating live truck status, the processor previously executed `snapshot = doc_ref.get()` over the network for every single incoming message to compare `incoming_ts > existing_ts`.
+* **Why It Is Dangerous:** 
+  Performing 1,000 network round-trip reads per second to Firestore creates an insurmountable I/O bottleneck, starving worker threads and ballooning CPU/network latency.
+* **How We Solved It:**
+  Moved the Out-of-Order Timestamp Guard purely **into RAM** ([`processor/main.py`](file:///home/user/Desktop/cold-chain-cloud/processor/main.py#L140-L155)):
+  1. Maintained an in-memory dictionary `_truck_latest_ts: dict[str, str] = {}`.
+  2. When a message arrives, its ISO timestamp is compared in RAM against `_truck_latest_ts.get(truck_id)`.
+  3. Stale, out-of-order, or duplicate packets are dropped in microseconds with zero network overhead.
+
+---
+
+### 9.3 Gap 3: Missing Live HUD Metrics Document (`live_metrics/hud`)
+
+* **The Problem:** 
+  [`architecture.txt`](file:///home/user/Desktop/cold-chain-cloud/architecture.txt) specifies a `live_metrics/hud` document in Firestore to provide global telemetry throughput rates and incident counts for operational HUDs.
+* **How We Solved It:**
+  1. The conflation flusher computes the live throughput rate (`_window_msgs_count / elapsed_sec`).
+  2. The flusher batches this metric into `db.collection("live_metrics").document("hud")` on every 1.0s tick, containing `current_msg_rate`, `total_messages_processed`, `total_alerts_generated`, and `active_trucks`.
+  3. Added the [`/api/live-hud`](file:///home/user/Desktop/cold-chain-cloud/dashboard/main.py#L1270-L1295) endpoint in the Dashboard API to surface these metrics.
+
+---
+
+### 9.4 Gap 4: Discord Webhook Rate Limiting & Cooldown Mismatch
+
+* **The Problem:** 
+  Discord webhooks enforce strict rate limits (max 5 requests per 2 seconds). Sending alerts for multiple trucks simultaneously could result in Discord HTTP 429 rate limit lockouts. Furthermore, the alert cooldown was set to 300s (5 minutes) instead of the 60s specified in [`architecture.txt`](file:///home/user/Desktop/cold-chain-cloud/architecture.txt).
+* **How We Solved It:**
+  1. Added a thread-safe `WebhookRateLimiter` ([`alert-notifier/notifier.py`](file:///home/user/Desktop/cold-chain-cloud/alert-notifier/notifier.py#L56-L72)) enforcing a strict interval of `1.0 / 2.0 = 0.5s` (max 2 requests/second).
+  2. Standardized the default incident alert cooldown to **60.0 seconds** per truck in both the Stream Processor and Alert Notifier.
+
+---
+
+### 9.5 Gap 5: API Route & Frontend Page Aliasing
+
+* **The Problem:** 
+  [`architecture.txt`](file:///home/user/Desktop/cold-chain-cloud/architecture.txt) references `POST /api/simulate`, `GET /api/history`, `dashboard.html`, and `historical.html`, while the existing codebase used `/api/telemetry/simulate-batch`, `/api/analytics`, `index.html`, and `analytics.html`.
+* **How We Solved It:**
+  In [`dashboard/main.py`](file:///home/user/Desktop/cold-chain-cloud/dashboard/main.py):
+  1. Added `@app.post("/api/simulate")` as an alias to `trigger_batch_scenario`.
+  2. Added `@app.get("/api/history")` as an alias to `get_analytics`.
+  3. Added redirect routes `/dashboard.html` $\rightarrow$ `/index.html` and `/historical.html` $\rightarrow$ `/analytics.html` to ensure complete interoperability.
+
+

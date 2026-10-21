@@ -12,8 +12,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from google.cloud import firestore
-from google.cloud import pubsub_v1
+try:
+    from google.cloud import firestore
+except ImportError:
+    firestore = None
+
+try:
+    from google.cloud import pubsub_v1
+except ImportError:
+    pubsub_v1 = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -778,6 +785,7 @@ class BatchSimulateRequest(BaseModel):
     scenario: str = "COMPRESSOR_FAILURE"
 
 @app.post("/api/telemetry/simulate-batch")
+@app.post("/api/simulate")
 def trigger_batch_scenario(req: BatchSimulateRequest):
     """
     Simultaneously simulate anomalies or restorations across multiple selected trucks to produce tension.
@@ -1053,6 +1061,7 @@ _stored_audit_records = [
 ]
 
 @app.get("/api/analytics")
+@app.get("/api/history")
 def get_analytics(truck_id: Optional[str] = None):
     """
     Return dynamic historical compliance analytics, root causes, route risks,
@@ -1247,6 +1256,38 @@ def redirect_simulator():
 def redirect_analytics():
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/analytics.html")
+
+@app.get("/dashboard.html")
+def redirect_dashboard():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/index.html")
+
+@app.get("/historical.html")
+def redirect_historical():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/analytics.html")
+
+@app.get("/api/live-hud")
+@app.get("/api/hud")
+def get_live_hud():
+    """Returns live telemetry throughput and aggregate fleet metrics from Firestore live_metrics/hud if available."""
+    if firestore and (os.environ.get("FIRESTORE_EMULATOR_HOST") or (project_id and project_id != "coldchain-local")):
+        try:
+            db_client = firestore.Client(project=project_id)
+            doc = db_client.collection("live_metrics").document("hud").get(timeout=1.0)
+            if doc.exists:
+                return doc.to_dict()
+        except Exception as e:
+            logger.debug("Could not read live_metrics/hud: %s", e)
+    
+    # Fallback to local in-memory metrics
+    return {
+        "current_msg_rate": 16.0,
+        "total_messages_processed": len(injected_logs_history),
+        "total_alerts_generated": 0,
+        "active_trucks": 16,
+        "source": "fallback"
+    }
 
 # Mount static web frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
