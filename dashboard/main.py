@@ -56,9 +56,15 @@ app.add_middleware(
 pubsub_publisher = None
 pubsub_telemetry_topic = None
 try:
-    pubsub_publisher = pubsub_v1.PublisherClient()
+    # High-throughput batch settings allowing up to 1,000+ msg/sec ingestion
+    batch_settings = pubsub_v1.types.BatchSettings(
+        max_messages=500,
+        max_bytes=1024 * 1024,  # 1 MB
+        max_latency=0.02        # 20ms micro-batching
+    )
+    pubsub_publisher = pubsub_v1.PublisherClient(batch_settings=batch_settings)
     pubsub_telemetry_topic = pubsub_publisher.topic_path(project_id, ps_topic)
-    logger.info("Connected Pub/Sub publisher to %s for cloud telemetry ingestion", pubsub_telemetry_topic)
+    logger.info("Connected Pub/Sub publisher to %s for high-speed cloud telemetry ingestion", pubsub_telemetry_topic)
 except Exception as e:
     logger.info("Pub/Sub publisher initialization skipped or failed: %s", e)
 
@@ -218,7 +224,7 @@ for tid, route_info in TRUCK_HIGHWAY_ROUTES.items():
         "last_ts": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     }
 
-# ── High-Speed 1,000 msg/sec Continuous Blaster State & Thread ───────────────
+# ── High-Speed 1,000 msg/sec Multi-Worker Parallel Blaster ─────────────────────
 _blaster_state = {
     "active": False,
     "target_rate": 1000,
@@ -227,23 +233,25 @@ _blaster_state = {
     "start_time": None
 }
 
-def _blaster_producer_loop():
-    """Background daemon thread: blasts high-velocity telemetry (1,000 msg/s) to Cloud Pub/Sub."""
-    global _blaster_state
+_blaster_lock = threading.Lock()
+_sent_in_rate_window = 0
+
+def _blaster_worker(worker_id: int, num_workers: int = 4):
+    """Parallel worker thread: streams high-throughput telemetry to Pub/Sub."""
+    global _sent_in_rate_window
     truck_keys = list(TRUCK_HIGHWAY_ROUTES.keys())
-    last_log_time = time.time()
-    last_rate_time = time.time()
-    sent_in_rate_window = 0
 
     while True:
         if not _blaster_state["active"]:
-            time.sleep(0.15)
+            time.sleep(0.1)
             continue
 
         target_rate = max(10, _blaster_state.get("target_rate", 1000))
-        # Micro-batching for high throughput: 25 messages per batch
-        batch_size = max(10, target_rate // 40)
-        sleep_interval = 1.0 / (target_rate / batch_size)
+        # Divide target rate across parallel workers
+        worker_rate = max(5, target_rate // num_workers)
+        # Micro-batching: 50 msgs per batch
+        batch_size = max(10, worker_rate // 5)
+        sleep_interval = 1.0 / max(1.0, (worker_rate / batch_size))
 
         t0 = time.time()
         now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -258,64 +266,76 @@ def _blaster_producer_loop():
             state["lon"] = lon
             state["last_ts"] = now_iso
 
-            # Slight thermal wobble around setpoint unless in manual anomaly
             if state["status"] == "OK":
                 state["cargo_temp_c"] = round(state["setpoint_c"] + random.uniform(-0.4, 0.4), 2)
                 state["excess_temp_c"] = round(state["cargo_temp_c"] - state["setpoint_c"], 2)
 
             speed = round(random.uniform(55.0, 75.0), 1)
             state["speed_kmph"] = speed
+            door_str = "true" if state["door_open"] else "false"
 
-            payload = {
-                "truck_id": tid,
-                "ts": now_iso,
-                "lat": lat,
-                "lon": lon,
-                "speed_kmph": speed,
-                "fuel_pct": round(state["fuel_pct"], 1),
-                "cargo_temp_c": round(state["cargo_temp_c"], 2),
-                "setpoint_c": round(state["setpoint_c"], 2),
-                "door_open": state["door_open"]
-            }
+            # Ultra-fast string interpolation (bypasses slow json.dumps in tight 1000 msg/s loop)
+            payload_str = (
+                f'{{"truck_id":"{tid}","ts":"{now_iso}","lat":{lat},"lon":{lon},'
+                f'"speed_kmph":{speed},"fuel_pct":{round(state["fuel_pct"], 1)},'
+                f'"cargo_temp_c":{state["cargo_temp_c"]},"setpoint_c":{state["setpoint_c"]},'
+                f'"door_open":{door_str}}}'
+            )
 
             if pubsub_publisher and pubsub_telemetry_topic:
                 try:
                     pubsub_publisher.publish(
                         pubsub_telemetry_topic,
-                        data=json.dumps(payload).encode('utf-8'),
+                        data=payload_str.encode('utf-8'),
                         truck_id=tid
                     )
                 except Exception:
                     pass
 
-            _blaster_state["total_sent"] += 1
-            sent_in_rate_window += 1
-
-        # Throughput computation
-        now = time.time()
-        if now - last_rate_time >= 1.0:
-            dt = now - last_rate_time
-            _blaster_state["actual_mps"] = round(sent_in_rate_window / dt, 1)
-            sent_in_rate_window = 0
-            last_rate_time = now
-
-        # Add periodic summary to injected logs history
-        if now - last_log_time >= 1.5:
-            time_str = datetime.now().strftime('%H:%M:%S')
-            injected_logs_history.append({
-                "time": time_str,
-                "type": "success-msg",
-                "message": f"⚡ High-Speed Blaster: {_blaster_state['actual_mps']:.0f} msg/s delivered to Pub/Sub '{ps_topic}' (Total: {_blaster_state['total_sent']:,} msgs)"
-            })
-            last_log_time = now
+        with _blaster_lock:
+            _blaster_state["total_sent"] += batch_size
+            _sent_in_rate_window += batch_size
 
         elapsed = time.time() - t0
         to_sleep = max(0.0, sleep_interval - elapsed)
         if to_sleep > 0:
             time.sleep(to_sleep)
 
-_blaster_thread = threading.Thread(target=_blaster_producer_loop, daemon=True)
-_blaster_thread.start()
+def _blaster_monitor_loop():
+    """Monitors real throughput and logs periodic summaries."""
+    global _sent_in_rate_window
+    last_log_time = time.time()
+    last_rate_time = time.time()
+
+    while True:
+        time.sleep(0.5)
+        now = time.time()
+        dt = now - last_rate_time
+        if dt >= 1.0:
+            with _blaster_lock:
+                actual = round(_sent_in_rate_window / dt, 1)
+                _sent_in_rate_window = 0
+            _blaster_state["actual_mps"] = actual
+            last_rate_time = now
+
+            if _blaster_state["active"] and (now - last_log_time >= 1.5):
+                time_str = datetime.now().strftime('%H:%M:%S')
+                injected_logs_history.append({
+                    "time": time_str,
+                    "type": "success-msg",
+                    "message": f"⚡ High-Speed Blaster: {_blaster_state['actual_mps']:.0f} msg/s delivered to Pub/Sub '{ps_topic}' (Total: {_blaster_state['total_sent']:,} msgs)"
+                })
+                last_log_time = now
+
+# Spawn 4 parallel worker threads + 1 throughput monitor
+_blaster_workers = []
+for wid in range(4):
+    t = threading.Thread(target=_blaster_worker, args=(wid, 4), daemon=True)
+    t.start()
+    _blaster_workers.append(t)
+
+_blaster_monitor_thread = threading.Thread(target=_blaster_monitor_loop, daemon=True)
+_blaster_monitor_thread.start()
 
 # ── Dynamic Continuous Fleet Movement Loop ────────────────────────────────────
 def _truck_motion_ticker_loop():
