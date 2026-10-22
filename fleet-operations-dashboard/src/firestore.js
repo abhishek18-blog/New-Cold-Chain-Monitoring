@@ -25,13 +25,14 @@ export function subscribeToTrucks(onUpdate, onError) {
     return null;
   }
   try {
-    const trucksCol = collection(db, "trucks");
+    const trucksCol = collection(db, "live_status");
     return onSnapshot(
       trucksCol,
       (snapshot) => {
         const trucks = [];
         snapshot.forEach((doc) => {
-          trucks.push({ id: doc.id, ...doc.data() });
+          const data = doc.data();
+          trucks.push({ truck_id: data.truck_id || doc.id, id: doc.id, ...data });
         });
         if (trucks.length > 0) {
           onUpdate(trucks);

@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import FleetHealthSummary from './components/FleetHealthSummary';
-import FleetSimulator from './components/FleetSimulator';
 import FleetMap from './components/FleetMap';
-import TelemetryTable from './components/TelemetryTable';
 import IncidentFeed from './components/IncidentFeed';
 import PipelineHealth from './components/PipelineHealth';
 import StreamThroughput from './components/StreamThroughput';
@@ -30,7 +28,8 @@ export default function App() {
       if (trucksRes.status === 'fulfilled' && trucksRes.value.ok) {
         const data = await trucksRes.value.json();
         if (data.trucks && Array.isArray(data.trucks) && data.trucks.length > 0) {
-          setTrucks(prev => (prev.length === 0 ? data.trucks : prev));
+          // Always update with the latest live moving truck coordinates and status
+          setTrucks(data.trucks);
         }
       }
 
@@ -60,18 +59,19 @@ export default function App() {
     }
   }, []);
 
-  // Connect native Firestore web SDK listener (onSnapshot) to trucks/ collection
-  // for serverless, true real-time map updates (Phase 2.3)
+  // Connect native Firestore web SDK listener (onSnapshot) to live_status collection
   useEffect(() => {
     let unsubscribe = null;
     try {
       unsubscribe = subscribeToTrucks(
         (liveTrucks) => {
-          setTrucks(liveTrucks);
-          const now = new Date();
-          const timeStr = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
-          const dateStr = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
-          setLastSync(`${timeStr} IST · ${dateStr} (Live Firestore onSnapshot)`);
+          if (liveTrucks && liveTrucks.length > 0) {
+            setTrucks(liveTrucks);
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+            const dateStr = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+            setLastSync(`${timeStr} IST · ${dateStr} (Live Firestore)`);
+          }
         },
         (err) => {
           console.warn('Firestore onSnapshot listener notice:', err);
@@ -81,9 +81,9 @@ export default function App() {
       console.warn('Could not initialize direct onSnapshot listener:', err);
     }
 
-    // Baseline fetch for metrics, incidents, health
+    // Baseline fetch for metrics, incidents, health, and smooth movement
     fetchData();
-    const interval = setInterval(fetchData, 2500);
+    const interval = setInterval(fetchData, 1200);
 
     return () => {
       if (unsubscribe) unsubscribe();
@@ -112,19 +112,11 @@ export default function App() {
         {/* Top Fleet Health KPI Cards */}
         <FleetHealthSummary counts={counts} />
 
-        {/* Fleet Crisis & Tension Simulator */}
-        <FleetSimulator onSimulateComplete={fetchData} />
-
-        {/* Live Operations Workspace: Map & Telemetry on left, Sidebar on right */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          {/* Main Column (8 cols): Map and Telemetry Table */}
-          <div className="lg:col-span-8 space-y-5">
+        {/* Live Operations Workspace: Clean Map on left, Incident & Health Sidebar on right */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* Main Column (8 cols): Large Interactive Map */}
+          <div className="lg:col-span-8">
             <FleetMap
-              trucks={trucks}
-              onSelectTruck={setSelectedTruckId}
-              selectedTruckId={selectedTruckId}
-            />
-            <TelemetryTable
               trucks={trucks}
               onSelectTruck={setSelectedTruckId}
               selectedTruckId={selectedTruckId}

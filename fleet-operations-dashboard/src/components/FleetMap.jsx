@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Scan, Settings, Key, Map as MapIcon, X, Check, Navigation, AlertTriangle } from 'lucide-react';
+import { Scan, Settings, Key, Map as MapIcon, X, Check, Navigation, AlertTriangle, FlaskConical } from 'lucide-react';
 import L from 'leaflet';
 
 const HIGHWAY_ROUTES = {
@@ -315,6 +315,16 @@ export default function FleetMap({ trucks = [], onSelectTruck, selectedTruckId }
         </div>
 
         <div className="flex items-center gap-2">
+          {/* ColdChainStudio Simulator Link */}
+          <a
+            href="/simulator.html"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold bg-[#2A1808] hover:bg-[#3D220C] border border-[#C2410C]/70 text-[#F59E0B] hover:text-[#FCD34D] transition-colors shadow-sm"
+            title="Open Telemetry Test Studio to inject scenarios and configure dummy values"
+          >
+            <FlaskConical className="w-3.5 h-3.5 text-[#F59E0B]" />
+            <span>ColdChainStudio</span>
+          </a>
+
           {/* Map Provider / API Key Button */}
           <button
             onClick={() => setShowSettingsModal(true)}
@@ -336,8 +346,8 @@ export default function FleetMap({ trucks = [], onSelectTruck, selectedTruckId }
         </div>
       </div>
 
-      {/* Map Viewport */}
-      <div className="relative w-full h-[360px] lg:h-[430px] bg-[#12100F]">
+      {/* Map Viewport - Expanded full height operational map */}
+      <div className="relative w-full h-[580px] lg:h-[700px] bg-[#12100F]">
         <div ref={mapContainerRef} className="w-full h-full" />
 
         {/* Live Motion Indicator Badge */}
