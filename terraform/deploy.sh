@@ -15,10 +15,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Load .env variables if present
 if [ -f "$ROOT_DIR/.env" ]; then
-  DISCORD_WEBHOOK_URL=$(grep "^DISCORD_WEBHOOK_URL=" "$ROOT_DIR/.env" | cut -d '=' -f2- || true)
+  DISCORD_WEBHOOK_URL=$(grep "^DISCORD_WEBHOOK_URL=" "$ROOT_DIR/.env" | cut -d '=' -f2- | tr -d '"' || true)
 fi
 
-DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-https://discord.com/api/webhooks/1562083725309775932/47uha9d8Ktdx0WziYRu6zOR_u7440PUIB2jicXUxbPtkrSM28YesJLeUt1jnjpXtknTr}"
+DISCORD_WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-https://discord.com/api/webhooks/1563536821294469202/JNHwpAjZGGCxKOK_k6a93Bsk_7rvWQsk15gbgqFob6pQEW3ESzRyWdXimAJiTFIZmVKn}"
 
 if [ -z "$PROJECT_ID" ]; then
   PROJECT_ID=$(gcloud config get-value project 2>/dev/null || true)

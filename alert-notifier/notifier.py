@@ -42,10 +42,7 @@ FLEET_DRIVERS: Dict[str, Dict[str, str]] = {
 
 from alert_manager import AlertManager
 
-DISCORD_WEBHOOK_URL = os.environ.get(
-    "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1562083725309775932/47uha9d8Ktdx0WziYRu6zOR_u7440PUIB2jicXUxbPtkrSM28YesJLeUt1jnjpXtknTr"
-)
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 DISCORD_VOICE_TTS = os.environ.get("DISCORD_VOICE_TTS", "false").lower() in ("true", "1", "yes")
 
 alert_manager = AlertManager()
