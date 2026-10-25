@@ -1,0 +1,45 @@
+No,Category,Service_Name,Service_Type,vCPU,Memory_GiB,CPU_Billing_Mode,CPU_Rate_USD_per_vCPUsec,Mem_Rate_USD_per_GiBsec,TYPICAL_Hours_per_Day,vCPU_sec_month_24x7,vCPU_sec_month_TYPICAL,GiB_sec_month_24x7,GiB_sec_month_TYPICAL,Cost_24x7_USD,Cost_TYPICAL_USD,Notes
+,,== SECTION 1: CLOUD RUN MICROSERVICES (no free tier) ==,,,,,,,,,,,,,,,
+1,Cloud Run,coldchain-dashboard-api,CR Service,1,1.0,cpu_idle=true (request-based),0.0000240,0.0000025,24 (always up — min=1),777600,777600,2592000,2592000,25.14,25.14,"CPU: 30% utilization × 2592000s = 777600 vCPU-sec × $0.0000240 = $18.66 | Mem: 2592000 × 1.0GiB × $0.0000025 = $6.48 | Total: $25.14"
+2,Cloud Run,coldchain-processor,CR Service,1,0.5,cpu_idle=false (always allocated),0.0000180,0.0000025,24 (always up — min=1),2592000,2592000,1296000,1296000,49.90,49.90,"CPU: 2592000 × $0.0000180 = $46.66 | Mem: 1296000 × $0.0000025 = $3.24 | Total: $49.90"
+3,Cloud Run,coldchain-alert-notifier,CR Service,1,0.5,cpu_idle=false (always allocated),0.0000180,0.0000025,24 (always up — min=1),2592000,2592000,1296000,1296000,49.90,49.90,"CPU: 2592000 × $0.0000180 = $46.66 | Mem: 1296000 × $0.0000025 = $3.24 | Total: $49.90"
+4,Cloud Run,coldchain-silence-detector,CR Job + Cloud Scheduler (every 1 min),1,0.5,Job rate (request-based),0.0000240,0.0000025,24 (Cloud Scheduler fires always),432000,432000,216000,216000,10.91,10.91,"43200 runs/month × 10s = 432000 vCPU-sec × $0.0000240 = $10.37 | Mem: 216000 × $0.0000025 = $0.54 | Total: $10.91"
+5,Cloud Run,coldchain-telemetry-generator,CR Job (on-demand),1,0.5,Job rate (request-based),0.0000240,0.0000025,8 hr/day (TYPICAL = testing/demo),2592000,864000,1296000,432000,65.45,21.82,"24x7: 2592000 × $0.0000240=$62.21 + Mem $3.24 = $65.45 | TYPICAL (8hr/day×30d): 864000 × $0.0000240=$20.74 + Mem $1.08 = $21.82"
+,,CLOUD RUN SUBTOTAL,,,,,,,,,,,,201.30,157.67,
+,,== SECTION 2: GCP SUPPORTING SERVICES (no free tier — web-search verified Oct 2026) ==,,,,,,,,,,,,,,,
+6,Cloud Firestore,Cloud Firestore Native Mode (asia-south1 — SINGLE REGION),Database,-,-,Writes $0.09/100K | Reads $0.03/100K | Storage $0.10/GiB,-,-,24 / 8hr writes (TYPICAL),-,-,-,-,9.66,3.74,"[CORRECTED] asia-south1 is single-region = HALF the multi-region price || 24x7: 7.85M writes/100K×$0.09=$7.07 + 8.42M reads/100K×$0.03=$2.53 + storage $0.06 = $9.66 || TYPICAL: 2.59M writes/100K×$0.09=$2.33 + 4.65M reads/100K×$0.03=$1.40 + storage $0.01 = $3.74"
+7,Cloud Pub/Sub,Cloud Pub/Sub (3 topics + 4 subscriptions),Messaging,-,-,$0.039/GiB (from first byte — no free tier),-,-,24 / 8hr TYPICAL,-,-,-,-,0.45,0.15,"24x7: 11.66 GiB/month × $0.039 = $0.45 | TYPICAL (8hr/day): 3.89 GiB × $0.039 = $0.15"
+8,BigQuery,BigQuery coldchain_analytics (telemetry_stream table),Analytics,-,-,Storage $0.02/GiB active | Queries $6.25/TiB (from first byte),-,-,24 (passive),-,-,-,-,0.39,0.34,"[CORRECTED] Query rate is $6.25/TiB (not $5.00) || Storage 24x7: 3.9GB × $0.02=$0.08; TYPICAL: 1.3GB × $0.02=$0.03 || Queries ~50GB/mo: 0.05 TiB × $6.25=$0.31 (same both) || 24x7: $0.39 | Typical: $0.34"
+9,Cloud Storage,coldchain-archive bucket (GCS),Object Storage,-,-,STANDARD $0.020/GiB | NEARLINE $0.010/GiB | COLDLINE $0.004/GiB,-,-,24 (passive archiving),-,-,-,-,0.10,0.10,"~5 GB new compressed JSONL.gz/month × $0.020 = $0.10 | Same both scenarios"
+10,Cloud Scheduler,Cloud Scheduler (silence-detector cron),Scheduler,-,-,$0.10/job/month (no free tier applied),-,-,24,-,-,-,-,0.10,0.10,"1 job × $0.10/month = $0.10"
+11,Artifact Registry,coldchain-containers Docker repo,Container Registry,-,-,$0.10/GiB/month storage,-,-,Passive,-,-,-,-,0.10,0.10,"~1 GiB (5 images × ~200MB each) × $0.10 = $0.10"
+12,Cloud Build,Cloud Build image build pipeline,CI/CD,-,-,$0.003/build-min (from first minute — no free tier),-,-,Occasional,-,-,-,-,0.30,0.30,"~4 deploys/month × 5 images × 5 min = 100 build-min × $0.003 = $0.30"
+,,GCP SERVICES SUBTOTAL,,,,,,,,,,,,11.10,4.83,
+,,== GRAND TOTAL (USD / month — NO FREE TIER) ==,,,,,,,,,,,,,,,
+,,GRAND TOTAL,Region: asia-south1 (Mumbai) | Prices web-search verified Oct-2026,-,-,-,-,-,-,-,-,-,-,212.40,162.50,"24x7: ALL 5 services fully running 30 days continuous | TYPICAL: telemetry-gen 8hr/day + all others 24x7 | NO free tier — full credit consumption"
+,,,,,,,,,,,,,,,,
+,,== PRICE CORRECTIONS vs PREVIOUS VERSION ==,,,,,,,,,,,,,,,
+,,Firestore Writes (CORRECTED),,,,Was $0.18/100K — WRONG (multi-region price),Correct for asia-south1: $0.09/100K,,,,,,,,,Source: cloud.google.com/firestore/pricing (single-region)
+,,Firestore Reads (CORRECTED),,,,Was $0.06/100K — WRONG (multi-region price),Correct for asia-south1: $0.03/100K,,,,,,,,,Source: cloud.google.com/firestore/pricing (single-region)
+,,Firestore Deletes (CORRECTED),,,,Was $0.02/100K — WRONG (multi-region price),Correct for asia-south1: $0.01/100K,,,,,,,,,Source: cloud.google.com/firestore/pricing (single-region)
+,,BigQuery Queries (CORRECTED),,,,Was $5.00/TiB — slightly wrong,Correct: $6.25/TiB,,,,,,,,,Source: cloud.google.com/bigquery/pricing
+,,Pub/Sub (MINOR CORRECTION),,,,Was $0.040/GiB,Correct: $0.039/GiB,,,,,,,,,Source: cloud.google.com/pubsub/pricing
+,,,,,,,,,,,,,,,,
+,,== VERIFIED LIVE PRICE REFERENCE (Web-search confirmed Oct 2026) ==,,,,,,,,,,,,,,,
+,,Cloud Run CPU always-on (cpu_idle=false),,,,0.0000180 USD/vCPU-sec,,,,,,,,CONFIRMED — google.com/run/pricing
+,,Cloud Run CPU request-based (cpu_idle=true / Jobs),,,,0.0000240 USD/vCPU-sec,,,,,,,,CONFIRMED — google.com/run/pricing
+,,Cloud Run Memory,,,,0.0000025 USD/GiB-sec,,,,,,,,CONFIRMED — google.com/run/pricing
+,,Cloud Run Requests,,,,0.40 USD per million,,,,,,,,CONFIRMED — google.com/run/pricing
+,,Firestore Writes (asia-south1 single-region),,,,0.09 USD per 100K documents,,,,,,,,CONFIRMED — google.com/firestore/pricing
+,,Firestore Reads (asia-south1 single-region),,,,0.03 USD per 100K documents,,,,,,,,CONFIRMED — google.com/firestore/pricing
+,,Firestore Deletes (asia-south1 single-region),,,,0.01 USD per 100K documents,,,,,,,,CONFIRMED — google.com/firestore/pricing
+,,Firestore Storage (asia-south1 regional),,,,0.10 USD per GiB/month,,,,,,,,CONFIRMED — google.com/firestore/pricing
+,,Pub/Sub throughput,,,,0.039 USD per GiB,,,,,,,,CONFIRMED — google.com/pubsub/pricing
+,,BigQuery Active Storage,,,,0.020 USD per GiB/month,,,,,,,,CONFIRMED — google.com/bigquery/pricing
+,,BigQuery On-Demand Queries,,,,6.25 USD per TiB scanned,,,,,,,,CONFIRMED — google.com/bigquery/pricing
+,,Cloud Storage Standard (regional),,,,0.020 USD per GiB/month,,,,,,,,CONFIRMED — google.com/storage/pricing
+,,Cloud Storage Nearline,,,,0.010 USD per GiB/month,,,,,,,,CONFIRMED — google.com/storage/pricing
+,,Cloud Storage Coldline,,,,0.004 USD per GiB/month,,,,,,,,CONFIRMED — google.com/storage/pricing
+,,Cloud Scheduler,,,,0.10 USD per job/month,,,,,,,,CONFIRMED — google.com/scheduler/pricing
+,,Artifact Registry Storage,,,,0.10 USD per GiB/month,,,,,,,,CONFIRMED — google.com/artifact-registry/pricing
+,,Cloud Build,,,,0.003 USD per build-minute,,,,,,,,CONFIRMED — google.com/build/pricing

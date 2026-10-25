@@ -5,6 +5,7 @@ import json
 import signal
 import logging
 import threading
+import asyncio
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 try:
@@ -20,7 +21,7 @@ logger = logging.getLogger("notifier")
 
 running = True
 
-# Driver Registry Mapping for the 15 fleet trucks
+# Driver Registry Mapping for the 16 fleet trucks
 FLEET_DRIVERS: Dict[str, Dict[str, str]] = {
     "TRK-001": {"name": "Rajesh Kumar", "phone": "+91-98201-11001", "cargo": "Fresh Produce", "route": "Goa → Mumbai"},
     "TRK-002": {"name": "Amit Sharma", "phone": "+91-98201-11002", "cargo": "Dairy & Milk", "route": "Nashik → Pune"},
@@ -44,6 +45,9 @@ from alert_manager import AlertManager
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 DISCORD_VOICE_TTS = os.environ.get("DISCORD_VOICE_TTS", "false").lower() in ("true", "1", "yes")
+DISCORD_VOICE_ENABLED = os.environ.get("DISCORD_VOICE_ENABLED", "true").lower() in ("true", "1", "yes")
+DISCORD_VOICE_NAME = os.environ.get("DISCORD_VOICE_NAME", "hi-IN-MadhurNeural")
+DISCORD_VOICE_RATE = os.environ.get("DISCORD_VOICE_RATE", "+0%")
 
 alert_manager = AlertManager()
 
@@ -146,6 +150,95 @@ def diagnose_failure_details(alert_data: Dict[str, Any]) -> tuple[str, str, str]
 
     return title, desc, action
 
+def build_hindi_situational_script(
+    truck_id: str,
+    alert_data: Dict[str, Any],
+    driver_info: Dict[str, str]
+) -> tuple[str, str, str]:
+    """
+    Build natural, context-aware Hindi voice announcement and diagnosis.
+    Returns: (spoken_hindi_script, hindi_title, hindi_action)
+    """
+    driver_name = driver_info.get("name", "चालक")
+    route = driver_info.get("route", "राष्ट्रीय राजमार्ग")
+    temp = float(alert_data.get('cargo_temp_c', 0.0))
+    setpoint = float(alert_data.get('setpoint_c', 0.0))
+    excess = float(alert_data.get('excess_temp_c', round(temp - setpoint, 2)))
+    door_open = bool(alert_data.get('door_open', False))
+    speed = float(alert_data.get('speed_kmph', 0.0))
+
+    clean_truck_spoken = truck_id.replace("-", " ")
+
+    if door_open and excess > 0:
+        hindi_title = "⚠️ दरवाजा खुला एवं तापमान वृद्धि अलर्ट"
+        spoken = (
+            f"सावधान चालक {driver_name}! ट्रक {clean_truck_spoken} पर आपातकालीन चेतावनी। "
+            f"मार्ग {route} पर चलते समय कार्गो कंपार्टमेंट का पिछला दरवाजा खुला पाया गया है। "
+            f"बाहरी गर्मी के कारण तापमान बढ़कर {temp:.1f} डिग्री सेल्सियस हो गया है, जो सुरक्षित सीमा से {excess:.1f} डिग्री अधिक है। "
+            f"तत्काल कार्रवाई: कृपया तुरंत इमरजेंसी लेन में सुरक्षित गाड़ी रोकें, दरवाजा कसकर बंद करें और सील की जांच करें।"
+        )
+        hindi_action = "इमरजेंसी लेन में सुरक्षित गाड़ी रोकें, पिछला दरवाजा कसकर बंद करें और सील जांचें!"
+    elif door_open:
+        hindi_title = "⚠️ कार्गो कंपार्टमेंट दरवाजा खुला है"
+        spoken = (
+            f"चेतावनी चालक {driver_name}! ट्रक {clean_truck_spoken} का कार्गो दरवाजा खुला या अनलैच पाया गया है। "
+            f"वर्तमान तापमान {temp:.1f} डिग्री है। "
+            f"तत्काल कार्रवाई: तापमान बिगड़ने से पहले तुरंत सुरक्षित स्थान पर रुककर दरवाजा बंद करें।"
+        )
+        hindi_action = "निकटतम सुरक्षित स्थान पर रुककर कार्गो का दरवाजा तुरंत बंद करें!"
+    elif excess >= 4.0:
+        hindi_title = "🔥 रेफ्रिजरेशन कंप्रेसर विफलता अलर्ट"
+        spoken = (
+            f"आपातकालीन अलर्ट चालक {driver_name}! ट्रक {clean_truck_spoken} की कूलिंग यूनिट में गंभीर खराबी आई है। "
+            f"कार्गो तापमान खतरनाक स्तर {temp:.1f} डिग्री सेल्सियस तक पहुंच गया है, जो निर्धारित तापमान से {excess:.1f} डिग्री अधिक है। "
+            f"तत्काल कार्रवाई: तुरंत गाड़ी सुरक्षित स्थान पर रोकें, बैकअप कूलिंग ऑन करें और कंट्रोल रूम को सूचित करें।"
+        )
+        hindi_action = "तुरंत गाड़ी रोकें, बैकअप कूलिंग स्विच ऑन करें और इमरजेंसी कंट्रोल रूम से संपर्क करें!"
+    elif excess <= -3.0:
+        hindi_title = "❄️ अत्यधिक ठंड एवं फ्रीजिंग स्पॉइलेज खतरा"
+        spoken = (
+            f"क्रिटिकल फ्रीज अलर्ट चालक {driver_name}! ट्रक {clean_truck_spoken} में अत्यधिक ठंड के कारण तापमान गिरकर {temp:.1f} डिग्री सेल्सियस हो गया है। "
+            f"दवाओं और टीकों के जमने का गंभीर जोखिम है। "
+            f"तत्काल कार्रवाई: गाड़ी रोककर थर्मोस्टेट को सामान्य तापमान {setpoint:.1f} डिग्री पर रीसेट करें।"
+        )
+        hindi_action = "गाड़ी सुरक्षित रोकें और थर्मोस्टेट सेटपॉइंट तुरंत ठीक करें!"
+    elif excess >= 2.0:
+        hindi_title = "⚠️ तापमान विचलन / कूलिंग यूनिट तनाव"
+        spoken = (
+            f"तापमान चेतावनी चालक {driver_name}! ट्रक {clean_truck_spoken} का तापमान बढ़कर {temp:.1f} डिग्री सेल्सियस हो गया है। "
+            f"कूलिंग यूनिट पर अतिरिक्त भार है। "
+            f"तत्काल कार्रवाई: एयरफ्लो की जांच करें और कूलिंग यूनिट को लगातार चालू रखें।"
+        )
+        hindi_action = "कूलिंग यूनिट का ऑपरेशन चेक करें और एयर वेंटिलेशन खुला रखें।"
+    else:
+        hindi_title = "🚨 शीत-शृंखला टेलीमेट्री अलर्ट"
+        spoken = (
+            f"टेलीमेट्री अलर्ट चालक {driver_name}! ट्रक {clean_truck_spoken} का तापमान {temp:.1f} डिग्री सेल्सियस दर्ज किया गया है। "
+            f"कृपया केबिन कंसोल की जांच करें।"
+        )
+        hindi_action = "इन-केबिन कंसोल और कूलिंग सेटिंग्स की जांच करें।"
+
+    return spoken, hindi_title, hindi_action
+
+async def _synthesize_edge_tts_async(text: str, output_path: str, voice: str, rate: str):
+    import edge_tts
+    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    await communicate.save(output_path)
+
+def synthesize_hindi_voice_audio(text: str, output_path: str) -> bool:
+    """Synthesize clean, natural studio Hindi voice using Edge Neural TTS."""
+    voice = os.environ.get("DISCORD_VOICE_NAME", "hi-IN-MadhurNeural")
+    rate = os.environ.get("DISCORD_VOICE_RATE", "+0%")
+    try:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(lambda: asyncio.run(_synthesize_edge_tts_async(text, output_path, voice, rate)))
+            future.result(timeout=15.0)
+        return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
+    except Exception as e:
+        logger.warning("Voice synthesis fallback (could not generate audio): %s", e)
+        return False
+
 def dispatch_discord_alert(
     truck_id: str,
     alert_data: Dict[str, Any],
@@ -153,16 +246,13 @@ def dispatch_discord_alert(
     webhook_url: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Dispatch rich real-time incident alert to Driver's Discord app with full failure diagnosis.
-    Includes instant mobile push notification content + high-visibility visual embed.
+    Dispatch rich real-time incident alert to Driver's Discord app with full failure diagnosis
+    and high-fidelity clean Hindi voice announcement attached as a playable audio file.
     """
     url = webhook_url or DISCORD_WEBHOOK_URL
     if not url:
         logger.warning("No Discord Webhook URL configured. Skipping Discord dispatch.")
         return {"success": False, "error": "No webhook URL"}
-
-    import urllib.request
-    import urllib.error
 
     temp = float(alert_data.get('cargo_temp_c', 0.0))
     setpoint = float(alert_data.get('setpoint_c', 0.0))
@@ -173,38 +263,43 @@ def dispatch_discord_alert(
     lon = float(alert_data.get('lon', 73.8567))
 
     title, description, action = diagnose_failure_details(alert_data)
+    hindi_spoken, hindi_title, hindi_action = build_hindi_situational_script(truck_id, alert_data, driver_info)
 
     # Color: Red (15158332) for severe / door breach, Orange/Gold (15844367) for moderate
     embed_color = 15158332 if (excess >= 4.0 or door_open or excess <= -3.0) else 15844367
 
     embed = {
         "title": f"🚨 {title} | {truck_id}",
-        "description": f"**DIAGNOSTIC REPORT:**\n{description}",
+        "description": (
+            f"**🎙️ वॉयस अलर्ट संदेश (Hindi Audio Voice Note Attached Below ⬇️):**\n"
+            f"> *\"{hindi_spoken}\"*\n\n"
+            f"**📋 DIAGNOSTIC REPORT:**\n{description}"
+        ),
         "color": embed_color,
         "fields": [
             {
-                "name": "👤 Assigned Driver",
+                "name": "👤 Assigned Driver / चालक",
                 "value": f"**{driver_info.get('name', 'Driver')}**\n📱 `{driver_info.get('phone', 'N/A')}`",
                 "inline": True
             },
             {
-                "name": "🛣️ Highway Route",
+                "name": "🛣️ Highway Route / मार्ग",
                 "value": f"{driver_info.get('route', 'Highway Corridor')}",
                 "inline": True
             },
             {
-                "name": "📦 Cargo Manifest",
+                "name": "📦 Cargo / माल",
                 "value": f"{driver_info.get('cargo', 'Vaccines & Pharma')}",
                 "inline": True
             },
             {
-                "name": "🌡️ Cargo Temp",
+                "name": "🌡️ Cargo Temp / तापमान",
                 "value": f"**{temp:.1f}°C** (Setpoint: {setpoint:.1f}°C, Δ +{excess:.1f}°C)" if excess >= 0 else f"**{temp:.1f}°C** (Setpoint: {setpoint:.1f}°C, Δ {excess:.1f}°C)",
                 "inline": True
             },
             {
-                "name": "🚪 Cargo Door",
-                "value": "⚠️ **DOOR IS OPEN**" if door_open else "✅ Door Closed",
+                "name": "🚪 Cargo Door / दरवाजा",
+                "value": "⚠️ **DOOR IS OPEN (खुला है)**" if door_open else "✅ Door Closed (बंद है)",
                 "inline": True
             },
             {
@@ -213,13 +308,13 @@ def dispatch_discord_alert(
                 "inline": True
             },
             {
-                "name": "🛑 Mandatory Driver Action",
-                "value": f"**{action}**",
+                "name": "🛑 Mandatory Driver Action / जरूरी कदम",
+                "value": f"**{hindi_action}**\n*{action}*",
                 "inline": False
             }
         ],
         "footer": {
-            "text": "ColdChain Cloud Fleet Telematics · Live Stream Incident Response"
+            "text": "ColdChain Cloud Fleet Telematics · Clean Hindi Voice Alert System"
         },
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
@@ -227,9 +322,10 @@ def dispatch_discord_alert(
     # Content string triggers mobile push notification banner on driver's phone
     content_banner = (
         f"🚨 **COLD-CHAIN EMERGENCY ALERT FOR DRIVER {driver_info.get('name', 'Driver')} ({truck_id})**\n"
-        f"⚠️ **Issue:** {title}\n"
+        f"🎙️ **हिंदी वॉयस अलर्ट संलग्न है (Hindi Voice Announcement Attached)**\n"
+        f"⚠️ **Issue:** {title} ({hindi_title})\n"
         f"🌡️ **Temp:** {temp:.1f}°C (Setpoint: {setpoint:.1f}°C | Excess: +{excess:.1f}°C) | **Door:** {'OPEN ⚠️' if door_open else 'Closed'}\n"
-        f"🛑 **Action Required:** {action}"
+        f"🛑 **Action:** {hindi_action}"
     )
 
     payload = {
@@ -238,30 +334,65 @@ def dispatch_discord_alert(
         "embeds": [embed]
     }
 
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "ColdChain-AlertNotifier/2.0"
-        },
-        method="POST"
-    )
+    # Generate Hindi speech audio file if voice is enabled
+    temp_audio_file = f"/tmp/coldchain_voice_{truck_id}_{int(time.time()*1000)}.mp3"
+    audio_ready = False
+    if DISCORD_VOICE_ENABLED:
+        audio_ready = synthesize_hindi_voice_audio(hindi_spoken, temp_audio_file)
 
     # Rate limit outgoing webhooks to max 2 req/s (architecture.txt requirement)
     discord_rate_limiter.acquire()
 
     try:
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
-            logger.info("📱 [DISCORD ALERT SUCCESS] Dispatched to driver app (%s) - HTTP %d", driver_info.get('name'), resp.status)
-            return {"success": True, "status": resp.status}
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="replace")
-        logger.error("❌ [DISCORD ALERT FAILED] HTTP %d: %s", e.code, err_body)
-        return {"success": False, "error": f"HTTP {e.code}: {err_body}"}
+        try:
+            import requests
+            has_requests = True
+        except ImportError:
+            has_requests = False
+
+        if audio_ready and has_requests and os.path.exists(temp_audio_file):
+            with open(temp_audio_file, "rb") as af:
+                files = {
+                    "files[0]": (f"alert_{truck_id}_hindi.mp3", af, "audio/mpeg")
+                }
+                resp = requests.post(
+                    url,
+                    data={"payload_json": json.dumps(payload)},
+                    files=files,
+                    headers={"User-Agent": "ColdChain-AlertNotifier/2.0"},
+                    timeout=15.0
+                )
+                if resp.status_code in (200, 204):
+                    logger.info("📱 [DISCORD VOICE ALERT SUCCESS] Dispatched Hindi audio to driver app (%s) - HTTP %d", driver_info.get('name'), resp.status_code)
+                    return {"success": True, "status": resp.status_code, "voice_attached": True}
+                else:
+                    logger.error("❌ [DISCORD ALERT FAILED] HTTP %d: %s", resp.status_code, resp.text)
+                    return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text}"}
+        else:
+            # Fallback to standard JSON post
+            import urllib.request
+            import urllib.error
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "ColdChain-AlertNotifier/2.0"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10.0) as resp:
+                logger.info("📱 [DISCORD ALERT SUCCESS] Dispatched to driver app (%s) - HTTP %d", driver_info.get('name'), resp.status)
+                return {"success": True, "status": resp.status, "voice_attached": False}
     except Exception as e:
         logger.error("❌ [DISCORD ALERT EXCEPTION] %s", e)
         return {"success": False, "error": str(e)}
+    finally:
+        if os.path.exists(temp_audio_file):
+            try:
+                os.remove(temp_audio_file)
+            except OSError:
+                pass
 
 def format_driver_sms(truck_id: str, alert_data: Dict[str, Any], driver_info: Dict[str, str]) -> str:
     """

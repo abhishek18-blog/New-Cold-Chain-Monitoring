@@ -128,6 +128,9 @@ services:
       ALERT_COOLDOWN_SEC: "${ALERT_COOLDOWN_SEC:-900}"
       DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL:-https://discord.com/api/webhooks/1562083725309775932/47uha9d8Ktdx0WziYRu6zOR_u7440PUIB2jicXUxbPtkrSM28YesJLeUt1jnjpXtknTr}"
       DISCORD_VOICE_TTS: "${DISCORD_VOICE_TTS:-false}"
+      DISCORD_VOICE_ENABLED: "${DISCORD_VOICE_ENABLED:-true}"
+      DISCORD_VOICE_NAME: "${DISCORD_VOICE_NAME:-hi-IN-MadhurNeural}"
+      DISCORD_VOICE_RATE: "${DISCORD_VOICE_RATE:-+0%}"
     volumes:
       - ./alert-notifier:/app
     depends_on:

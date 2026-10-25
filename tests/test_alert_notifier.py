@@ -139,3 +139,45 @@ def test_diagnose_failure_freeze_spoilage():
     assert "freezing" in desc.lower()
     assert "thermostat" in action.lower()
 
+def test_build_hindi_situational_script_door_breach():
+    """Verify Hindi situational speech and action generation for door breach."""
+    from notifier import build_hindi_situational_script
+    alert_data = {
+        "cargo_temp_c": 8.2,
+        "setpoint_c": 4.0,
+        "excess_temp_c": 4.2,
+        "door_open": True,
+        "speed_kmph": 60.0
+    }
+    driver_info = {
+        "name": "Abhishek Deshmukh",
+        "route": "Pune → Mumbai",
+        "cargo": "Vaccines & Pharma"
+    }
+    spoken, title, action = build_hindi_situational_script("TRK-016", alert_data, driver_info)
+    assert "Abhishek Deshmukh" in spoken
+    assert "दरवाजा खुला" in spoken or "दरवाजा खुला" in title
+    assert "8.2" in spoken
+    assert "गाड़ी रोकें" in action
+
+def test_build_hindi_situational_script_compressor_failure():
+    """Verify Hindi situational speech for compressor failure."""
+    from notifier import build_hindi_situational_script
+    alert_data = {
+        "cargo_temp_c": 9.5,
+        "setpoint_c": 4.0,
+        "excess_temp_c": 5.5,
+        "door_open": False,
+        "speed_kmph": 75.0
+    }
+    driver_info = {
+        "name": "Sanjay Gupta",
+        "route": "Hyderabad → Mumbai",
+        "cargo": "Biologics & Plasma"
+    }
+    spoken, title, action = build_hindi_situational_script("TRK-007", alert_data, driver_info)
+    assert "Sanjay Gupta" in spoken
+    assert "कूलिंग यूनिट" in spoken or "कंप्रेसर" in title
+    assert "9.5" in spoken
+    assert "बैकअप कूलिंग" in spoken or "बैकअप" in action
+

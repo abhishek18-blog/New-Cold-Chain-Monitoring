@@ -1,0 +1,315 @@
+================================================================================
+  ColdChain Fleet — Cloud Run Microservices & GCP Cost Breakdown
+  Generated: 2026-10-25  |  Region: asia-south1 (Mumbai)
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PART 1 — HOW MANY SERVICES ARE THERE?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TOTAL CLOUD RUN DEPLOYMENTS : 5
+  ├── Cloud Run Services (always-on HTTP containers) : 3
+  └── Cloud Run Jobs (batch / cron-triggered)        : 2
+
+────────────────────────────────────────────────────────────────────────────────
+SERVICE 1 — coldchain-dashboard-api   [Cloud Run SERVICE]
+────────────────────────────────────────────────────────────────────────────────
+  Role       : Public-facing Operations UI + REST API
+  Image Dir  : ./dashboard
+  Port       : 8000
+  Ingress    : INGRESS_TRAFFIC_ALL  (public HTTPS)
+  CPU        : 1 vCPU   (cpu_idle = true — scales to 0 when no traffic)
+  Memory     : 1 Gi
+  Scaling    : min=1  to  max=5 instances
+  Endpoints  : /api/trucks  /api/alerts  /api/metrics
+  Tech       : FastAPI + Leaflet.js map + WebSocket live KPIs
+  Visibility : Public (allUsers invoker binding)
+
+────────────────────────────────────────────────────────────────────────────────
+SERVICE 2 — coldchain-processor   [Cloud Run SERVICE]
+────────────────────────────────────────────────────────────────────────────────
+  Role       : Real-time stream processor (telemetry -> excursion classification)
+  Image Dir  : ./processor
+  Port       : 8080 (internal)
+  Ingress    : INGRESS_TRAFFIC_INTERNAL_ONLY
+  CPU        : 1 vCPU   (cpu_idle = FALSE — always-on, zero-lag processing)
+  Memory     : 512 Mi
+  Scaling    : min=1  to  max=10 instances
+  Consumes   : Pub/Sub subscription "telemetry-sub"
+  Publishes  : Pub/Sub topic "alerts-topic"  (on excursion)
+  Writes To  : Firestore collections — live_status & alerts
+  Logic      : Schema validation, temp/humidity threshold checks (OK/WARN/CRIT),
+               out-of-order timestamp guard, DLQ routing (5-retry poison pills)
+
+────────────────────────────────────────────────────────────────────────────────
+SERVICE 3 — coldchain-alert-notifier   [Cloud Run SERVICE]
+────────────────────────────────────────────────────────────────────────────────
+  Role       : Driver & fleet-ops alert dispatcher
+  Image Dir  : ./alert-notifier
+  Port       : 8080 (internal)
+  Ingress    : INGRESS_TRAFFIC_INTERNAL_ONLY
+  CPU        : 1 vCPU   (cpu_idle = FALSE — instant alert dispatch)
+  Memory     : 512 Mi
+  Scaling    : min=1  to  max=3 instances
+  Consumes   : Pub/Sub subscription "alerts-sub"
+  Channels   : Discord Webhook, SMS/WhatsApp simulation, in-cab buzzer downlink
+  Logic      : Driver directory lookup, 15-min anti-spam debouncer per truck
+
+────────────────────────────────────────────────────────────────────────────────
+SERVICE 4 — coldchain-silence-detector   [Cloud Run JOB + Cloud Scheduler]
+────────────────────────────────────────────────────────────────────────────────
+  Role       : Detects dead/offline trucks (NO_SIGNAL flag)
+  Image Dir  : ./silence-detector
+  Job Type   : Cloud Run v2 Job  (runs once per invocation)
+  Trigger    : Cloud Scheduler cron  "* * * * *"  (every 1 minute)
+  CPU        : 1 vCPU   (batch — no HTTP server, exits after scan)
+  Memory     : 512 Mi
+  Logic      : Scans Firestore live_status; flags trucks whose last_updated
+               timestamp is older than 120 seconds as status=NO_SIGNAL
+  Env Vars   : RUN_ONCE=true, SILENCE_CHECK_INTERVAL_SEC=30,
+               SILENCE_TIMEOUT_SEC (configurable, default 120s)
+
+────────────────────────────────────────────────────────────────────────────────
+SERVICE 5 — coldchain-telemetry-generator   [Cloud Run JOB]
+────────────────────────────────────────────────────────────────────────────────
+  Role       : Simulated IoT fleet data producer (15 refrigerated trucks)
+  Image Dir  : ./telemetry-generator
+  Job Type   : Cloud Run v2 Job  (manually triggered or on-demand)
+  CPU        : 1 vCPU
+  Memory     : 512 Mi
+  Publishes  : Pub/Sub topic "telemetry-topic"
+  Config     : PING_INTERVAL_SEC=1.0, EXCURSION_PROBABILITY=0.03
+  Trucks     : TRK-001 through TRK-015 — GPS routes, temp, humidity,
+               speed, fuel %, door status, vibration
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PART 2 — SUPPORTING GCP INFRASTRUCTURE (not Cloud Run, but billable)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  PUBSUB TOPICS (3)
+    ├── telemetry-topic       (7-day retention, high-throughput ingestion)
+    ├── alerts-topic          (7-day retention, excursion events)
+    └── telemetry-dlq-topic   (dead-letter for poison-pill messages)
+
+  PUBSUB SUBSCRIPTIONS (4)
+    ├── telemetry-sub         -> Processor (streaming pull, DLQ after 5 fails)
+    ├── alerts-sub            -> Alert Notifier (streaming pull)
+    ├── telemetry-bigquery-sub-> Zero-code direct stream -> BigQuery
+    └── telemetry-dlq-sub     -> Manual inspection / replay
+
+  FIRESTORE (Native Mode)
+    ├── Collection: live_status   (real-time state of 15 trucks)
+    └── Collection: alerts        (time-series excursion audit log)
+
+  BIGQUERY
+    ├── Dataset: coldchain_analytics
+    └── Table:   telemetry_stream  (DAY partitioned, 30-day active retention)
+        Schema : data(JSON), publish_time, subscription_name, message_id,
+                 attributes
+
+  CLOUD STORAGE
+    └── Bucket: <project-id>-coldchain-archive-<env>
+        Lifecycle: STANDARD->NEARLINE (30d)->COLDLINE (90d)->ARCHIVE (365d)
+
+  ARTIFACT REGISTRY
+    └── Repo: coldchain-containers  (Docker, stores 5 microservice images)
+
+  CLOUD BUILD
+    └── Builds & pushes all 5 container images from source
+
+  CLOUD SCHEDULER
+    └── Job: coldchain-silence-detector-trigger  (cron: every 1 min, UTC)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PART 3 — ESTIMATED MONTHLY COST ON GOOGLE CLOUD RUN (asia-south1)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+NOTE: Prices are approximate. Actual billing depends on exact traffic volume,
+      Pub/Sub message rates, Firestore operation counts, and BigQuery query GB.
+      Region: asia-south1 (Mumbai). All costs in USD/month.
+
+────────────────────────────────────────────────────────────────────────────────
+A) CLOUD RUN SERVICES
+────────────────────────────────────────────────────────────────────────────────
+
+  Pricing model:
+    CPU (allocated):  $0.00002400 / vCPU-second
+    CPU (idle):       $0.00000240 / vCPU-second   (cpu_idle=true)
+    Memory:           $0.00000250 / GiB-second
+    Requests:         $0.40 per million requests
+
+  Service               | Min | vCPU   | Memory  | cpu_idle | Est. Monthly
+  ----------------------|-----|--------|---------|----------|--------------
+  dashboard-api         |  1  | 1 core | 1 Gi    | YES      | ~$  5 - $  8
+    (idle most of time,          scales to 0 if no requests arrive)
+  ----------------------|-----|--------|---------|----------|--------------
+  processor             |  1  | 1 core | 512 Mi  | NO       | ~$ 50 - $ 70
+    (CPU runs 24x7, always consuming Pub/Sub messages)
+  ----------------------|-----|--------|---------|----------|--------------
+  alert-notifier        |  1  | 1 core | 512 Mi  | NO       | ~$ 50 - $ 70
+    (CPU runs 24x7, instant alert dispatch)
+  ----------------------|-----|--------|---------|----------|--------------
+
+  Cloud Run Services Subtotal (1 min-instance each, normal traffic):
+    MINIMUM estimate  ->  ~$105 / month
+    PEAK estimate     ->  ~$200 / month  (if all scale to max instances)
+
+────────────────────────────────────────────────────────────────────────────────
+B) CLOUD RUN JOBS
+────────────────────────────────────────────────────────────────────────────────
+
+  Pricing model:
+    CPU:    $0.00002400 / vCPU-second
+    Memory: $0.00000250 / GiB-second
+    (No minimum instance charge — pay only when running)
+
+  silence-detector (runs ~1 min every 1 min -> ~44,640 executions/month)
+    Each run: ~5-10 seconds active, 1 vCPU, 512Mi
+    Cost/run : ~$0.00012 CPU + ~$0.0000065 memory  ~= $0.000127
+    Monthly  : 44,640 x $0.000127                  ~= $5.70 / month
+
+  telemetry-generator (on-demand, assume ~8 hrs/day of testing)
+    Daily runtime: 8 hrs x 3600s = 28,800s per day
+    Monthly:       28,800 x 30   = 864,000 vCPU-seconds
+    CPU cost:      864,000 x $0.000024              ~= $20.70
+    Memory cost:   864,000 x 0.5 GiB x $0.0000025  ~= $ 1.08
+    Monthly                                         ~= $22 / month
+    (If run only occasionally, cost drops proportionally)
+
+  Cloud Run Jobs Subtotal:  ~$28 / month  (typical usage)
+
+────────────────────────────────────────────────────────────────────────────────
+C) GOOGLE CLOUD PUB/SUB
+────────────────────────────────────────────────────────────────────────────────
+
+  Pricing:
+    First 10 GiB/month : FREE
+    Next tier           : $0.04 per GiB
+
+  At 15 trucks x 1 msg/5 sec -> 3 msg/sec -> 7.8M msg/month
+  Avg payload ~500 bytes -> ~3.9 GB/month (3 topics x subscriptions)
+  Cost -> FREE tier covers it (under 10 GiB)
+
+  Pub/Sub Subtotal:  ~$0 - $2 / month
+
+────────────────────────────────────────────────────────────────────────────────
+D) GOOGLE CLOUD FIRESTORE
+────────────────────────────────────────────────────────────────────────────────
+
+  Pricing (asia-south1):
+    Reads  : $0.06  per 100,000 reads
+    Writes : $0.18  per 100,000 writes
+    Deletes: $0.02  per 100,000 deletes
+    Storage: $0.102 per GiB/month
+
+  Estimates:
+    Writes: 15 trucks x 1/5 sec = 3/sec = 7.8M writes/month
+            7.8M x $0.18/100K                               ~= $14 / month
+    Reads:  Dashboard polling + silence-detector
+            ~10M reads/month x $0.06/100K                   ~= $ 6 / month
+    Storage: 15 truck docs + alerts log, ~50 MB              ~= $ 0 / month
+
+  Firestore Subtotal:  ~$20 / month
+
+────────────────────────────────────────────────────────────────────────────────
+E) GOOGLE BIGQUERY
+────────────────────────────────────────────────────────────────────────────────
+
+  Pricing:
+    Storage (active)  : $0.02 per GiB/month  (30-day partition expiry)
+    Streaming Insert  : Pub/Sub->BQ subscription — no extra insert fee
+    Query on-demand   : $5.00 per TiB scanned (first 1 TiB/month FREE)
+
+  ~3.9 GB/month stored (30-day rolling window)
+  Storage cost: 3.9 GB x $0.02                               ~= $0.08 / month
+  Queries: assuming moderate analytics use (< 1 TiB)         ~= $ 0    / month (FREE)
+
+  BigQuery Subtotal:  ~$1 / month
+
+────────────────────────────────────────────────────────────────────────────────
+F) CLOUD STORAGE (Archive Bucket)
+────────────────────────────────────────────────────────────────────────────────
+
+  STANDARD class (0-30 days): $0.020 per GiB
+  NEARLINE  (30-90 days):     $0.010 per GiB
+  COLDLINE  (90-365 days):    $0.004 per GiB
+
+  Assuming ~5 GB new archive per month, small total volume:  ~$1 / month
+
+────────────────────────────────────────────────────────────────────────────────
+G) CLOUD SCHEDULER
+────────────────────────────────────────────────────────────────────────────────
+
+  Pricing: First 3 jobs FREE. Additional: $0.10/job/month
+  1 scheduler job (silence-detector) -> FREE
+
+  Cloud Scheduler Subtotal:  $0 / month
+
+────────────────────────────────────────────────────────────────────────────────
+H) ARTIFACT REGISTRY & CLOUD BUILD
+────────────────────────────────────────────────────────────────────────────────
+
+  Artifact Registry Storage: $0.10 per GiB/month
+    ~5 Docker images x ~200 MB each = ~1 GB                  ~= $0.10 / month
+
+  Cloud Build: First 120 build-minutes/day FREE
+    5 images x ~5 min each = 25 min per deploy
+    Occasional redeploys -> stays in FREE tier                ~= $ 0 / month
+
+  Subtotal:  ~$0.10 / month
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PART 4 — TOTAL COST SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  GCP Service                                  | Est. Monthly Cost (USD)
+  ---------------------------------------------|------------------------
+  Cloud Run Services (3)                       | $105 - $200
+    dashboard-api   (1 min-instance)            |
+    processor       (cpu always-on)             |
+    alert-notifier  (cpu always-on)             |
+  ---------------------------------------------|------------------------
+  Cloud Run Jobs (2)                           | $28
+    silence-detector (every 1 min)              |
+    telemetry-generator (on-demand)             |
+  ---------------------------------------------|------------------------
+  Cloud Pub/Sub (3 topics, 4 subs)             | $0 - $2
+  ---------------------------------------------|------------------------
+  Cloud Firestore (Native)                     | $20
+  ---------------------------------------------|------------------------
+  BigQuery (analytics + streaming)             | $1
+  ---------------------------------------------|------------------------
+  Cloud Storage (archive bucket)               | $1
+  ---------------------------------------------|------------------------
+  Cloud Scheduler (1 job)                      | $0  (FREE tier)
+  ---------------------------------------------|------------------------
+  Artifact Registry + Cloud Build              | ~$0.10
+  ---------------------------------------------|------------------------
+  TOTAL (typical / light fleet traffic)        | ~$155 - $165 / month
+  TOTAL (peak / fully scaled fleet)            | ~$255 - $275 / month
+  ---------------------------------------------|------------------------
+
+  BIGGEST COST DRIVER:
+    -> processor & alert-notifier each have cpu_idle=FALSE with min=1 instance.
+       They consume a full vCPU 24x7.  Combined that is ~$100-140/month alone.
+
+  COST OPTIMIZATION TIPS:
+    1. Set cpu_idle=TRUE on processor/alert-notifier if sub-second latency is
+       not required — this can cut Cloud Run bill by up to 90%.
+    2. Reduce min_instance_count to 0 (scale-to-zero) if cold-start delay
+       of ~1-2 seconds is acceptable.
+    3. Reduce Firestore write frequency (batch updates every 15s instead of
+       every message) — can cut Firestore cost by 60-70%.
+    4. Partition BigQuery queries to minimize scanned bytes.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Source files:
+    terraform/main.tf           — full infrastructure-as-code
+    docker-compose.yml          — local development equivalents
+    terraform/deploy.sh         — automated Cloud Build + Terraform deployer
+    flow.md / architecture.md   — system architecture & data flow diagrams
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
